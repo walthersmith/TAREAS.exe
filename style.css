@@ -1209,6 +1209,20 @@ body::after {
   text-shadow: var(--glow-pink);
 }
 
+/* Visible sólo para lectores de pantalla. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 480px) {
   body {
     padding: 16px;
@@ -1228,5 +1242,40 @@ body::after {
   }
   .rom-picker__menu {
     right: -16px;
+  }
+}
+
+/* ===== MOVIMIENTO REDUCIDO =====
+   Se apagan las dos animaciones que corren en bucle (el glitch del título y
+   el pulso del anillo), decorativas y potencialmente molestas. Las de
+   feedback —flash del temporizador y de la celda de pomodoro— se acortan en
+   vez de eliminarse: comunican que algo ha pasado. Las capas retro
+   (scanlines, viñeta, esquinas) son gradientes estáticos y no se tocan. */
+@media (prefers-reduced-motion: reduce) {
+  .app__title {
+    animation: none;
+  }
+  .timer[data-running="true"] .timer__ring-progress {
+    animation: none;
+  }
+
+  .timer--flash {
+    animation: flash 0.2s 1;
+  }
+  .pomo-cell--flash {
+    animation: none;
+    box-shadow: var(--glow-cyan);
+  }
+
+  .rom-picker__menu,
+  .timer__settings,
+  .log__body {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
   }
 }

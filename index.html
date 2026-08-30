@@ -16,7 +16,7 @@
     <header class="app__header">
       <h1 class="app__title">TAREAS.exe</h1>
       <div class="app__header-row">
-        <p class="app__subtitle" id="counter">0 pendientes</p>
+        <p class="app__subtitle" id="counter" role="status" aria-live="polite">0 pendientes</p>
         <div class="rom-picker" id="rom-picker">
           <button class="rom-picker__current" id="rom-current" type="button" aria-haspopup="listbox" aria-expanded="false">
             <span class="rom-picker__label">ROM</span>
@@ -31,10 +31,10 @@
     <section class="timer" id="timer" aria-label="Pomodoro">
       <button class="timer__cfg" id="settings-btn" type="button" aria-label="Configurar tiempos" title="Configurar">⚙</button>
 
-      <div class="timer__modes" role="tablist">
-        <button class="timer__mode timer__mode--active" data-mode="focus" type="button" role="tab">FOCUS</button>
-        <button class="timer__mode" data-mode="short" type="button" role="tab">BREAK</button>
-        <button class="timer__mode" data-mode="long" type="button" role="tab">LONG</button>
+      <div class="timer__modes" role="group" aria-label="Modo del temporizador">
+        <button class="timer__mode timer__mode--active" data-mode="focus" type="button" aria-pressed="true">FOCUS</button>
+        <button class="timer__mode" data-mode="short" type="button" aria-pressed="false">BREAK</button>
+        <button class="timer__mode" data-mode="long" type="button" aria-pressed="false">LONG</button>
       </div>
 
       <div class="timer__settings" id="settings" hidden>
@@ -74,6 +74,10 @@
           <div class="timer__label" id="timer-label">FOCUS</div>
         </div>
       </div>
+
+      <!-- El anuncio va aparte del reloj: leer cada segundo sería insufrible,
+           pero el fin de sesión sí debe anunciarse. -->
+      <p class="visually-hidden" id="timer-announce" role="status" aria-live="polite"></p>
 
       <div class="timer__controls">
         <button class="timer__btn timer__btn--primary" id="toggle" type="button">START</button>

@@ -77,6 +77,7 @@ const empty = document.getElementById("empty");
 const timerEl = document.getElementById("timer");
 const timeEl = document.getElementById("time");
 const labelEl = document.getElementById("timer-label");
+const announceEl = document.getElementById("timer-announce");
 const ringEl = document.getElementById("ring");
 const toggleBtn = document.getElementById("toggle");
 const resetBtn = document.getElementById("reset");
@@ -565,7 +566,9 @@ function renderTimer() {
   toggleBtn.textContent = timer.running ? "PAUSE" : "START";
 
   modeBtns.forEach((b) => {
-    b.classList.toggle("timer__mode--active", b.dataset.mode === timer.mode);
+    const active = b.dataset.mode === timer.mode;
+    b.classList.toggle("timer__mode--active", active);
+    b.setAttribute("aria-pressed", active ? "true" : "false");
   });
 
   // Los puntos se generan según los ciclos configurados, no fijos a 4.
@@ -671,6 +674,7 @@ function onComplete({ silent = false } = {}) {
   if (!silent) {
     beep();
     flashTimer();
+    announce(`${MODES[finishedMode].label} terminado.`);
   }
 
   // Log session. Se guarda también el texto de la tarea para que el historial
@@ -717,6 +721,15 @@ function onComplete({ silent = false } = {}) {
 function flashTimer() {
   timerEl.classList.add("timer--flash");
   setTimeout(() => timerEl.classList.remove("timer--flash"), 1800);
+}
+
+// Mensaje para lectores de pantalla. Se limpia antes de escribir para que dos
+// avisos iguales seguidos se anuncien las dos veces.
+function announce(message) {
+  announceEl.textContent = "";
+  setTimeout(() => {
+    announceEl.textContent = message;
+  }, 50);
 }
 
 // El AudioContext se crea una sola vez, durante un gesto del usuario (START).
