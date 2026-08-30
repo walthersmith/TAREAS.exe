@@ -29,6 +29,8 @@
     </header>
 
     <section class="timer" id="timer" aria-label="Pomodoro">
+      <button class="timer__cfg" id="stats-btn" type="button" aria-label="Ver estadísticas" title="Stats (S)">▦</button>
+      <button class="timer__cfg" id="help-btn" type="button" aria-label="Ayuda" title="Ayuda (?)">?</button>
       <button class="timer__cfg" id="settings-btn" type="button" aria-label="Configurar tiempos" title="Configurar">⚙</button>
 
       <div class="timer__modes" role="group" aria-label="Modo del temporizador">
@@ -74,6 +76,9 @@
             <span class="setting__unit" id="set-sound-name">synth</span>
             <input type="file" id="set-sound-file" accept="audio/*" hidden />
           </div>
+          <div class="setting__group">
+            <button class="setting__toggle" id="set-note-prompt" type="button" aria-pressed="true" aria-label="Pedir nota al terminar focus">NOTA AL TERMINAR</button>
+          </div>
         </div>
       </div>
 
@@ -108,7 +113,7 @@
         class="form__input"
         id="input"
         type="text"
-        placeholder="> Nueva tarea..."
+        placeholder="> Nueva tarea · #tag1 #tag2 (Ctrl+K)"
         maxlength="200"
         required
       />
@@ -116,6 +121,12 @@
         +
       </button>
     </form>
+
+    <div class="tag-filter" id="tag-filter" hidden>
+      <span class="tag-filter__prefix">// filtrando por</span>
+      <span class="tag-filter__tag" id="tag-filter-name"></span>
+      <button class="tag-filter__clear" id="tag-filter-clear" type="button" aria-label="Quitar filtro">×</button>
+    </div>
 
     <ul class="list" id="list"></ul>
 
@@ -157,6 +168,26 @@
           <div class="chart__title">// TOP TASKS</div>
           <div class="chart__body" id="log-tasks"></div>
         </div>
+
+        <div class="chart" id="log-tags-block" hidden>
+          <div class="chart__title">// TOP TAGS</div>
+          <div class="chart__body" id="log-tags"></div>
+        </div>
+
+        <div class="chart">
+          <div class="chart__title">// HEATMAP <span class="chart__year" id="heatmap-year"></span></div>
+          <div class="heatmap-wrap" id="heatmap-wrap"></div>
+          <div class="heatmap-legend">
+            <span class="heatmap-legend__label">menos</span>
+            <span class="heatmap-swatch" data-q="0"></span>
+            <span class="heatmap-swatch" data-q="1"></span>
+            <span class="heatmap-swatch" data-q="2"></span>
+            <span class="heatmap-swatch" data-q="3"></span>
+            <span class="heatmap-swatch" data-q="4"></span>
+            <span class="heatmap-legend__label">más</span>
+          </div>
+          <div class="heatmap-total" id="heatmap-total">—</div>
+        </div>
       </div>
     </section>
 
@@ -177,6 +208,56 @@
 
     <p class="empty" id="empty">No hay tareas. ¡Añade una!</p>
   </main>
+
+  <!-- Modal para anotar qué se hizo en el pomodoro recién terminado.
+       Aparece sólo cuando la pestaña tiene foco (si está oculta, sólo la
+       Notification API del sistema). -->
+  <div class="session-note" id="session-note" hidden>
+    <div class="session-note__panel" role="dialog" aria-labelledby="session-note-title">
+      <p class="session-note__title" id="session-note-title">[ sesión completa ]</p>
+      <label class="session-note__label" for="session-note-input">¿Qué hiciste en este pomodoro? <span class="session-note__hint">(opcional)</span></label>
+      <input type="text" id="session-note-input" class="session-note__input" maxlength="200" autocomplete="off" />
+      <div class="session-note__actions">
+        <button class="session-note__btn session-note__btn--primary" id="session-note-save" type="button">GUARDAR</button>
+        <button class="session-note__btn" id="session-note-skip" type="button">OMITIR</button>
+      </div>
+      <p class="visually-hidden" id="session-note-announce" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- Toasts esquina inferior derecha. -->
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Command palette (Ctrl/Cmd+K). -->
+  <div class="palette" id="palette" hidden>
+    <div class="palette__panel">
+      <input type="text" id="palette-input" class="palette__input" placeholder="> ¿Qué quieres hacer?" autocomplete="off" />
+      <ul class="palette__list" id="palette-list" role="listbox"></ul>
+      <p class="palette__hint">↑↓ navegar · Enter ejecutar · Esc cerrar</p>
+    </div>
+  </div>
+
+  <!-- Help modal (?) -->
+  <div class="help" id="help" hidden>
+    <div class="help__panel" role="dialog" aria-labelledby="help-title">
+      <div class="help__header">
+        <h2 class="help__title" id="help-title">[ HELP ]</h2>
+        <button class="help__close" id="help-close" type="button" aria-label="Cerrar ayuda">×</button>
+      </div>
+      <div class="help__body" id="help-body"></div>
+    </div>
+  </div>
+
+  <!-- Stats modal (S / 📊) -->
+  <div class="stats-modal" id="stats-modal" hidden>
+    <div class="stats-modal__panel" role="dialog" aria-labelledby="stats-modal-title">
+      <div class="stats-modal__header">
+        <h2 class="stats-modal__title" id="stats-modal-title">[ MISSION LOG ]</h2>
+        <button class="stats-modal__close" id="stats-modal-close" type="button" aria-label="Cerrar estadísticas">×</button>
+      </div>
+      <div class="stats-modal__body" id="stats-modal-body"></div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

@@ -8,10 +8,39 @@ const ROM_KEY = "todo-app:rom";
 const SOUND_KEY = "todo-app:sound";
 const RING_CIRCUMFERENCE = 2 * Math.PI * 88;
 
-const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4 };
+const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4, notePrompt: true };
 const DEFAULT_SOUND = { enabled: true, volume: 0.5, customFile: null }; // customFile: {name, dataUrl, mime, size} | null
 const MAX_CYCLES = 12;
 const POMO_VISIBLE_MAX = 5;
+const MAX_TAGS_PER_TASK = 5;
+const SESSION_NOTE_TIMEOUT_MS = 30_000;
+const TOAST_TTL_MS = 4000;
+const HEATMAP_Q1 = 15; // minutos para el primer cuartil
+const HEATMAP_Q2 = 45;
+const HEATMAP_Q3 = 90;
+const HEATMAP_Q4 = 150;
+
+// Normaliza un tag: minúsculas, sin #, sin espacios al borde. Vacío → "".
+function normalizeTag(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^#+/, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 32);
+}
+
+// Separa el texto en {text, tags}. Los #palabra sueltos al final se vuelven
+// tags; el resto del texto queda como task.text sin los #tokens.
+function parseTextAndTags(raw) {
+  const tagRe = /(?:^|\s)#([a-z0-9_\-áéíóúñü]+)/gi;
+  const tags = [];
+  const text = String(raw || "").replace(tagRe, (_, m) => {
+    tags.push(normalizeTag(m));
+    return "";
+  }).replace(/\s+/g, " ").trim();
+  return { text, tags: [...new Set(tags)].slice(0, MAX_TAGS_PER_TASK) };
+}
 
 // Cada ROM define los 4 slots semánticos del tema.
 // El CSS mapea cada slot a un uso concreto (FOCUS=primary, SHORT=accent, LONG=tertiary, highlight=focus-task).
@@ -64,6 +93,7 @@ let timer = loadTimer();
 let sessions = loadSessions();
 let activeTaskId = null;
 let editingTaskId = null;
+let activeTagFilter = null; // string | null — no persistido
 
 // ===== ELEMENTOS =====
 const form = document.getElementById("form");
@@ -96,6 +126,18 @@ const setCyclesInput = document.getElementById("set-cycles");
 const settingsSaveBtn = document.getElementById("settings-save");
 const settingsCancelBtn = document.getElementById("settings-cancel");
 
+const helpBtn = document.getElementById("help-btn");
+const helpEl = document.getElementById("help");
+const helpBody = document.getElementById("help-body");
+const helpClose = document.getElementById("help-close");
+
+const statsBtn = document.getElementById("stats-btn");
+const statsModalEl = document.getElementById("stats-modal");
+const statsModalBody = document.getElementById("stats-modal-body");
+const statsModalClose = document.getElementById("stats-modal-close");
+
+const setNotePromptToggle = document.getElementById("set-note-prompt");
+
 const setSoundToggle = document.getElementById("set-sound");
 const setVolumeInput = document.getElementById("set-volume");
 const setVolumeVal = document.getElementById("set-volume-val");
@@ -117,6 +159,27 @@ const logBestDateEl = document.getElementById("log-best-date");
 const logChartEl = document.getElementById("log-chart");
 const logTasksEl = document.getElementById("log-tasks");
 const logTasksBlock = document.getElementById("log-tasks-block");
+const logTagsBlock = document.getElementById("log-tags-block");
+const logTagsEl = document.getElementById("log-tags");
+const heatmapWrap = document.getElementById("heatmap-wrap");
+const heatmapYearEl = document.getElementById("heatmap-year");
+const heatmapTotalEl = document.getElementById("heatmap-total");
+
+const tagFilterEl = document.getElementById("tag-filter");
+const tagFilterName = document.getElementById("tag-filter-name");
+const tagFilterClear = document.getElementById("tag-filter-clear");
+
+const sessionNoteEl = document.getElementById("session-note");
+const sessionNoteInput = document.getElementById("session-note-input");
+const sessionNoteSave = document.getElementById("session-note-save");
+const sessionNoteSkip = document.getElementById("session-note-skip");
+const sessionNoteAnnounce = document.getElementById("session-note-announce");
+
+const toastsEl = document.getElementById("toasts");
+
+const paletteEl = document.getElementById("palette");
+const paletteInput = document.getElementById("palette-input");
+const paletteList = document.getElementById("palette-list");
 
 const romPicker = document.getElementById("rom-picker");
 const romCurrent = document.getElementById("rom-current");
@@ -134,6 +197,10 @@ function loadTasks() {
       text: t.text,
       done: !!t.done,
       pomodoros: Number.isFinite(t.pomodoros) ? t.pomodoros : 0,
+      tags: Array.isArray(t.tags)
+        ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))]
+            .slice(0, 5)
+        : [],
     })) : [];
   } catch {
     return [];
@@ -211,6 +278,8 @@ function loadSettings() {
       short: clamp(parsed.short, DEFAULT_SETTINGS.short),
       long:  clamp(parsed.long,  DEFAULT_SETTINGS.long),
       cycles: clamp(parsed.cycles, DEFAULT_SETTINGS.cycles, MAX_CYCLES),
+      // Boolean aditivo: si falta en entries viejos, default = true.
+      notePrompt: typeof parsed.notePrompt === "boolean" ? parsed.notePrompt : DEFAULT_SETTINGS.notePrompt,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -246,9 +315,17 @@ function openSettings() {
   updateSoundToggleUI();
   updateVolumeUI();
   updateSoundFileUI();
+  updateNotePromptUI();
   setFocusInput.focus();
   setFocusInput.select();
   playSound("settingsOpen");
+}
+
+function updateNotePromptUI() {
+  if (!setNotePromptToggle) return;
+  setNotePromptToggle.setAttribute("aria-pressed", settings.notePrompt ? "true" : "false");
+  setNotePromptToggle.textContent = settings.notePrompt ? "NOTA AL TERMINAR" : "NOTA OFF";
+  setNotePromptToggle.classList.toggle("setting__toggle--off", !settings.notePrompt);
 }
 
 // reason: "close" (escape, click fuera) | "save" (commit) | "cancel" (botón CANCEL)
@@ -274,6 +351,7 @@ function commitSettings() {
     short: clamp(setShortInput, settings.short),
     long:  clamp(setLongInput,  settings.long),
     cycles: clamp(setCyclesInput, settings.cycles, MAX_CYCLES),
+    notePrompt: settings.notePrompt,
   };
   saveSettings();
   closeSettings("save");
@@ -290,7 +368,9 @@ let currentRom = loadRom();
 // ROMS es la única fuente de verdad de los colores: applyRom() escribe las
 // variables CSS. El :root del stylesheet sólo conserva la paleta por defecto,
 // para que la app se vea bien en el instante previo a que corra este script.
-function applyRom(romKey) {
+// `silent` suprime sonido + toast: lo usa INIT para no anunciar el ROM al
+// cargar la página.
+function applyRom(romKey, { silent = false } = {}) {
   const rom = ROMS[romKey];
   if (!rom) return;
   currentRom = romKey;
@@ -309,7 +389,10 @@ function applyRom(romKey) {
   romMenu.querySelectorAll(".rom-option").forEach((opt) => {
     opt.classList.toggle("rom-option--active", opt.dataset.rom === romKey);
   });
-  playSound("romSwitch", romKey);
+  if (!silent) {
+    playSound("romSwitch", romKey);
+    toast(`ROM: ${rom.name}`);
+  }
 }
 
 function renderRomMenu() {
@@ -391,13 +474,20 @@ function renderTasks() {
   list.innerHTML = "";
   let toFocus = null;
 
-  for (const task of tasks) {
+  // Aplica el filtro de tag (no persistido). El orden de tasks[] se mantiene;
+  // el filtro sólo afecta a lo que se renderiza y al contador.
+  const visible = activeTagFilter
+    ? tasks.filter((t) => (t.tags || []).includes(activeTagFilter))
+    : tasks;
+
+  for (const task of visible) {
     const li = document.createElement("li");
     li.className =
       "item" +
       (task.done ? " item--done" : "") +
       (task.id === activeTaskId && !task.done ? " item--focus" : "");
     li.dataset.id = task.id;
+    li.draggable = true;
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
@@ -433,11 +523,21 @@ function renderTasks() {
     del.textContent = "×";
     del.addEventListener("click", () => removeTask(task.id));
 
+    const drag = document.createElement("span");
+    drag.className = "item__drag";
+    drag.setAttribute("aria-hidden", "true");
+    drag.title = "Arrastra para reordenar";
+    drag.textContent = "⠿";
+
     li.append(checkbox, body);
+    if (task.tags && task.tags.length > 0) {
+      li.appendChild(buildTagsRow(task.tags));
+    }
     if (task.pomodoros > 0) {
       li.appendChild(buildPomodoroBar(task.pomodoros));
     }
-    li.append(focusBtn, del);
+    li.append(focusBtn, drag, del);
+    attachDragHandlers(li, task.id);
     list.appendChild(li);
   }
 
@@ -446,15 +546,63 @@ function renderTasks() {
     toFocus.select();
   }
 
+  // El contador refleja el total real, no el filtrado: el filtro es
+  // cosmética y no debe engañar sobre cuántas tareas quedan pendientes.
   const pending = tasks.filter((t) => !t.done).length;
   counter.textContent = pending === 1 ? "1 pendiente" : `${pending} pendientes`;
 
   const hasCompleted = tasks.some((t) => t.done);
   clearBtn.disabled = !hasCompleted;
 
+  // Empty sólo cuando no hay tareas en absoluto; si hay pero el filtro las
+  // oculta, mostramos un mensaje específico.
+  const noResults = visible.length === 0 && activeTagFilter !== null;
   empty.hidden = tasks.length > 0;
+  if (noResults) {
+    const note = document.createElement("li");
+    note.className = "item item--empty-filter";
+    note.textContent = `// ninguna tarea con #${activeTagFilter}`;
+    list.appendChild(note);
+  }
 
+  renderTagFilter();
   renderActiveTask();
+}
+
+function buildTagsRow(tags) {
+  const wrap = document.createElement("span");
+  wrap.className = "item__tags";
+  for (const tag of tags) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (tag === activeTagFilter ? " chip--active" : "");
+    chip.dataset.tag = tag;
+    chip.textContent = `#${tag}`;
+    chip.title = `Filtrar por #${tag}`;
+    chip.setAttribute("aria-label", `Filtrar por etiqueta ${tag}`);
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setTagFilter(tag === activeTagFilter ? null : tag);
+    });
+    wrap.appendChild(chip);
+  }
+  return wrap;
+}
+
+function setTagFilter(tag) {
+  activeTagFilter = tag;
+  renderTasks();
+  renderMissionLog();
+}
+
+function renderTagFilter() {
+  if (!tagFilterEl) return;
+  if (activeTagFilter) {
+    tagFilterEl.hidden = false;
+    tagFilterName.textContent = `#${activeTagFilter}`;
+  } else {
+    tagFilterEl.hidden = true;
+  }
 }
 
 // ===== EDICIÓN EN LÍNEA =====
@@ -508,10 +656,19 @@ function finishEditing(newText, kind) {
   const task = tasks.find((t) => t.id === editingTaskId);
   editingTaskId = null;
   if (task && newText !== null) {
-    const trimmed = newText.trim();
-    if (trimmed && trimmed !== task.text) {
-      task.text = trimmed;
-      saveTasks();
+    const parsed = parseTextAndTags(newText);
+    if (parsed.text) {
+      let changed = parsed.text !== task.text;
+      const newTags = parsed.tags;
+      const oldTags = task.tags || [];
+      if (newTags.length !== oldTags.length || newTags.some((t, i) => t !== oldTags[i])) {
+        changed = true;
+      }
+      if (changed) {
+        task.text = parsed.text;
+        task.tags = newTags;
+        saveTasks();
+      }
     }
   }
   renderTasks();
@@ -520,9 +677,9 @@ function finishEditing(newText, kind) {
 }
 
 function addTask(text) {
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  tasks.push({ id: uid(), text: trimmed, done: false, pomodoros: 0 });
+  const parsed = parseTextAndTags(text);
+  if (!parsed.text) return;
+  tasks.push({ id: uid(), text: parsed.text, done: false, pomodoros: 0, tags: parsed.tags });
   saveTasks();
   renderTasks();
   playSound("add");
@@ -536,6 +693,7 @@ function toggle(id) {
   saveTasks();
   renderTasks();
   playSound("complete");
+  if (task.done) toast("Tarea completada");
 }
 
 function removeTask(id) {
@@ -576,6 +734,59 @@ function flashPomodoroCell(taskId) {
     last.classList.add("pomo-cell--flash");
     setTimeout(() => last.classList.remove("pomo-cell--flash"), 800);
   });
+}
+
+// --- Drag & drop reorder ---
+let dragId = null;
+
+function attachDragHandlers(li, id) {
+  li.addEventListener("dragstart", (e) => {
+    // No arrastrar si el filtro está activo: el orden visible no representa
+    // el array y el drop confundiría.
+    if (activeTagFilter) { e.preventDefault(); return; }
+    if (editingTaskId) { e.preventDefault(); return; }
+    dragId = id;
+    li.classList.add("item--dragging");
+    e.dataTransfer.effectAllowed = "move";
+    // dataTransfer necesita algo para que Firefox dispare el drag.
+    try { e.dataTransfer.setData("text/plain", id); } catch {}
+  });
+  li.addEventListener("dragend", () => {
+    dragId = null;
+    list.querySelectorAll(".item--drop-target").forEach((n) => n.classList.remove("item--drop-target"));
+  });
+  li.addEventListener("dragover", (e) => {
+    if (!dragId || dragId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    li.classList.toggle("item--drop-target-before", before);
+    li.classList.toggle("item--drop-target-after", !before);
+  });
+  li.addEventListener("dragleave", () => {
+    li.classList.remove("item--drop-target-before", "item--drop-target-after");
+  });
+  li.addEventListener("drop", (e) => {
+    e.preventDefault();
+    if (!dragId || dragId === id) return;
+    const rect = li.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    reorderTasks(dragId, id, before);
+  });
+}
+
+function reorderTasks(srcId, dstId, before) {
+  const srcIdx = tasks.findIndex((t) => t.id === srcId);
+  const dstIdx = tasks.findIndex((t) => t.id === dstId);
+  if (srcIdx < 0 || dstIdx < 0 || srcIdx === dstIdx) return;
+  const [moved] = tasks.splice(srcIdx, 1);
+  // Re-indexar el destino después de sacar el source
+  const newDst = tasks.findIndex((t) => t.id === dstId);
+  tasks.splice(before ? newDst : newDst + 1, 0, moved);
+  saveTasks();
+  renderTasks();
+  announce(`Tarea movida a la posición ${tasks.indexOf(moved) + 1}.`);
 }
 
 // ===== TIMER =====
@@ -688,6 +899,7 @@ function pause() {
 function reset() {
   pause();
   timer.remaining = MODES[timer.mode].duration;
+  modeStash[timer.mode] = null;
   renderTimer();
   playSound("timerReset");
 }
@@ -706,10 +918,26 @@ function tick() {
   renderTimer();
 }
 
-function setMode(mode) {
+// Stash del remaining de cada modo cuando el usuario cambia manualmente.
+// Al volver al modo, se restaura en vez de empezar de cero. El auto-advance
+// desde onComplete() no usa este stash (sus sesiones se completaron completas).
+// No persistido: al recargar la página se pierde. Suficiente para la sesión.
+const modeStash = { focus: null, short: null, long: null };
+
+function setMode(mode, { fromUser = false } = {}) {
+  // Si el usuario cambia de modo manualmente (no auto-advance), guarda el
+  // remaining del modo actual para restaurarlo al volver.
+  if (fromUser && timer.mode !== mode) {
+    modeStash[timer.mode] = timer.running ? remainingFromClock() : timer.remaining;
+  }
   pause();
   timer.mode = mode;
-  timer.remaining = MODES[mode].duration;
+  // Restaura del stash si hay algo; si no, duración completa.
+  const stashed = modeStash[mode];
+  timer.remaining = stashed != null ? stashed : MODES[mode].duration;
+  // Consumir el stash del modo al que entramos: ya no representa "lo que
+  // dejamos pendiente en otro lado".
+  modeStash[mode] = null;
   renderTimer();
   const soundKey = mode === "focus" ? "modeFocus" : mode === "short" ? "modeShort" : "modeLong";
   playSound(soundKey);
@@ -718,12 +946,6 @@ function setMode(mode) {
 function onComplete({ silent = false } = {}) {
   const finishedMode = timer.mode;
   const finishedMinutes = Math.round(MODES[finishedMode].duration / 60);
-
-  if (!silent) {
-    playSound("sessionComplete", finishedMode);
-    flashTimer();
-    announce(`${MODES[finishedMode].label} terminado.`);
-  }
 
   // Log session. Se guarda también el texto de la tarea para que el historial
   // sobreviva a su borrado; los registros antiguos se resuelven por taskId.
@@ -746,6 +968,23 @@ function onComplete({ silent = false } = {}) {
       renderTasks();
       flashPomodoroCell(task.id);
     }
+  }
+
+  // Feedback audible/visible para que el usuario sepa que pasó algo.
+  if (!silent) {
+    playSound("sessionComplete", finishedMode);
+    flashTimer();
+    announce(`${MODES[finishedMode].label} terminado.`);
+  }
+
+  // En breaks y con la pestaña oculta, sólo Notification API.
+  // En focus con la pestaña visible, mostramos un toast rápido + el modal
+  // de nota es opcional (configurable). El sonido ya disparó arriba.
+  if (!silent && finishedMode === "focus" && document.visibilityState === "visible" && settings.notePrompt) {
+    promptForSessionNote();
+    toast(`${MODES[finishedMode].label} terminado`);
+  } else if (!silent) {
+    toast(`${MODES[finishedMode].label} terminado`);
   }
 
   if (!silent && "Notification" in window && Notification.permission === "granted") {
@@ -779,6 +1018,319 @@ function announce(message) {
     announceEl.textContent = message;
   }, 50);
 }
+
+// --- Modal de nota de sesión ---
+// Aparece al terminar un focus (sólo si la pestaña tiene foco). Enter guarda,
+// Esc omite, timeout 30s omite. La nota se guarda en el último session log.
+function promptForSessionNote() {
+  // Si ya hay un modal abierto (caso patológico de doble onComplete), no abrir otro.
+  if (!sessionNoteEl.hidden) return;
+  const targetIdx = sessions.length - 1;
+  sessionNoteInput.value = "";
+  sessionNoteEl.hidden = false;
+
+  let settled = false;
+  let timeoutId = null;
+  const close = () => {
+    sessionNoteEl.hidden = true;
+    sessionNoteInput.removeEventListener("keydown", onKey);
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = null;
+  };
+  const finish = (skip) => {
+    if (settled) return;
+    settled = true;
+    if (!skip) {
+      const text = sessionNoteInput.value.trim();
+      if (text && targetIdx >= 0 && sessions[targetIdx]) {
+        sessions[targetIdx].note = text;
+        saveSessions();
+        renderMissionLog();
+      }
+    }
+    close();
+  };
+  const onKey = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(false);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(true);
+    }
+  };
+  sessionNoteInput.addEventListener("keydown", onKey);
+  sessionNoteSave.addEventListener("click", () => finish(false), { once: true });
+  sessionNoteSkip.addEventListener("click", () => finish(true), { once: true });
+
+  timeoutId = setTimeout(() => finish(true), SESSION_NOTE_TIMEOUT_MS);
+
+  // Autofocus con un tick de delay: el modal ya está visible pero el foco
+  // todavía está donde estaba antes de onComplete.
+  setTimeout(() => sessionNoteInput.focus(), 30);
+  // Anuncio para lectores de pantalla.
+  sessionNoteAnnounce.textContent = "";
+  setTimeout(() => {
+    sessionNoteAnnounce.textContent = "Sesión completa. Puedes anotar qué hiciste.";
+  }, 80);
+}
+
+// --- Toasts ---
+// Feedback visible en la esquina inferior derecha. Hasta 3 apilados, fade-out.
+function toast(message) {
+  if (!toastsEl) return;
+  while (toastsEl.children.length >= 3) {
+    toastsEl.firstElementChild.remove();
+  }
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.textContent = message;
+  el.setAttribute("role", "status");
+  const dismiss = () => {
+    if (!el.parentNode) return;
+    el.classList.add("toast--leaving");
+    setTimeout(() => el.remove(), 200);
+  };
+  el.addEventListener("click", dismiss);
+  el._ttl = setTimeout(dismiss, TOAST_TTL_MS);
+  toastsEl.appendChild(el);
+}
+
+// --- Command palette (Ctrl/Cmd+K) ---
+// Overlay con fuzzy-substring sobre una lista de acciones. Cada callback
+// invoca el mismo código que el botón o atajo existente — no se duplica
+// lógica, sólo se referencia.
+const ACTIONS = [
+  // Timer
+  { id: "timer-start",  label: "Iniciar temporizador",     kw: "start play go correr",  run: () => start() },
+  { id: "timer-pause",  label: "Pausar temporizador",      kw: "pause stop parar",      run: () => pause() },
+  { id: "timer-reset",  label: "Reiniciar temporizador",   kw: "reset restart",         run: () => reset() },
+  { id: "mode-focus",   label: "Modo · FOCUS",             kw: "focus trabajar",        run: () => setMode("focus") },
+  { id: "mode-break",   label: "Modo · BREAK",             kw: "break descanso corto",  run: () => setMode("short") },
+  { id: "mode-long",    label: "Modo · LONG",              kw: "long descanso largo",   run: () => setMode("long") },
+  // Tasks
+  { id: "task-add",     label: "Añadir tarea",             kw: "new add crear",         run: () => { closePalette(); input.focus(); } },
+  { id: "task-clear",   label: "Limpiar completadas",      kw: "clear clean borrar",    run: () => clearCompleted() },
+  // Log
+  { id: "log-open",     label: "Abrir mission log",        kw: "open log stats",        run: () => openLog() },
+  { id: "log-close",    label: "Cerrar mission log",       kw: "close log",             run: () => closeLog() },
+  { id: "log-toggle",   label: "Toggle mission log",       kw: "log toggle",            run: () => toggleLog() },
+  // Settings
+  { id: "settings",     label: "Abrir configuración",      kw: "settings config setup", run: () => openSettings() },
+  // Help & Stats
+  { id: "help",         label: "Abrir ayuda",              kw: "help ayuda atajos",     run: () => openHelp() },
+  { id: "stats",        label: "Abrir estadísticas",       kw: "stats stats modal log", run: () => openStatsModal() },
+  // ROMs
+  { id: "rom-default",   label: "ROM · DEFAULT",  kw: "rom theme default",         run: () => applyRom("default") },
+  { id: "rom-blade",     label: "ROM · BLADE",    kw: "rom theme blade",           run: () => applyRom("blade") },
+  { id: "rom-matrix",    label: "ROM · MATRIX",   kw: "rom theme matrix green",    run: () => applyRom("matrix") },
+  { id: "rom-cdproject", label: "ROM · CDPROJECT",kw: "rom theme cdproject yellow",run: () => applyRom("cdproject") },
+  { id: "rom-akira",     label: "ROM · AKIRA",    kw: "rom theme akira red",      run: () => applyRom("akira") },
+  // Data
+  { id: "export",       label: "Exportar datos",           kw: "export backup download", run: () => exportData() },
+  { id: "import",       label: "Importar datos",           kw: "import restore upload",  run: () => importFile.click() },
+  // Filter
+  { id: "filter-clear", label: "Quitar filtro de tag",     kw: "filter clear tag",       run: () => setTagFilter(null) },
+];
+
+let paletteActive = 0;
+let paletteFiltered = ACTIONS.slice();
+
+function openPalette() {
+  paletteEl.hidden = false;
+  paletteInput.value = "";
+  paletteActive = 0;
+  paletteFiltered = ACTIONS.slice();
+  renderPaletteList();
+  setTimeout(() => paletteInput.focus(), 30);
+}
+
+function closePalette() {
+  if (paletteEl.hidden) return;
+  paletteEl.hidden = true;
+  paletteInput.value = "";
+}
+
+function filterPalette(query) {
+  const q = String(query || "").toLowerCase().trim();
+  paletteFiltered = q
+    ? ACTIONS.filter((a) => a.label.toLowerCase().includes(q) || a.kw.toLowerCase().includes(q))
+    : ACTIONS.slice();
+  paletteActive = 0;
+  renderPaletteList();
+}
+
+function renderPaletteList() {
+  paletteList.innerHTML = "";
+  paletteFiltered.forEach((action, i) => {
+    const li = document.createElement("li");
+    li.className = "palette__item" + (i === paletteActive ? " palette__item--active" : "");
+    li.dataset.id = action.id;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", i === paletteActive ? "true" : "false");
+    li.textContent = action.label;
+    li.addEventListener("click", () => runPaletteAction(i));
+    paletteList.appendChild(li);
+  });
+  if (paletteFiltered.length === 0) {
+    const li = document.createElement("li");
+    li.className = "palette__item palette__item--empty";
+    li.textContent = "// sin resultados";
+    paletteList.appendChild(li);
+  }
+}
+
+function movePaletteActive(delta) {
+  if (paletteFiltered.length === 0) return;
+  paletteActive = (paletteActive + delta + paletteFiltered.length) % paletteFiltered.length;
+  renderPaletteList();
+}
+
+function runPaletteAction(idx) {
+  const action = paletteFiltered[idx];
+  if (!action) return;
+  closePalette();
+  try {
+    action.run();
+  } catch {}
+}
+
+paletteInput.addEventListener("input", () => filterPalette(paletteInput.value));
+paletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); movePaletteActive(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); movePaletteActive(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); runPaletteAction(paletteActive); }
+});
+// Click en el backdrop cierra; click en el panel no.
+paletteEl.addEventListener("click", (e) => {
+  if (e.target === paletteEl) closePalette();
+});
+
+// --- Help modal (?) ---
+// Lista estática de atajos y features. Se renderiza una vez al init.
+const HELP_CONTENT = [
+  {
+    title: "Atajos del teclado",
+    rows: [
+      ["Space", "Iniciar / pausar temporizador"],
+      ["R", "Reiniciar temporizador"],
+      ["L", "Toggle Mission Log"],
+      ["Ctrl/Cmd + K", "Abrir command palette"],
+      ["?", "Esta ayuda"],
+      ["S", "Modal de estadísticas (▦)"],
+      ["Esc", "Cerrar paleta / menú / modal"],
+      ["Alt + ↑ / ↓", "Mover tarea enfocada"],
+    ],
+  },
+  {
+    title: "Tareas",
+    rows: [
+      ["Doble clic en tarea", "Editar texto"],
+      ["Tags en el texto", "Escribí #frontend para agregar etiqueta"],
+      ["Click en chip #tag", "Filtrar lista por etiqueta"],
+      ["Hover sobre tarea", "Aparece el handle ⠿ para arrastrar"],
+      ["Botón ◎", "Marcar como tarea activa"],
+    ],
+  },
+  {
+    title: "Temporizador",
+    rows: [
+      ["Tabs FOCUS / BREAK / LONG", "Cambiar modo (recuerda el progreso al volver)"],
+      ["Auto-advance", "Tras N ciclos focus, salta a break largo"],
+      ["Stash de modo", "Al cambiar de modo manualmente guarda el remaining"],
+      ["Nota al terminar", "Anotá qué hiciste (configurable en ⚙)"],
+    ],
+  },
+  {
+    title: "Mission Log",
+    rows: [
+      ["Heatmap", "365 días, color por minutos enfocados"],
+      ["TOP TASKS", "Tus tareas con más minutos de focus"],
+      ["TOP TAGS", "Tus etiquetas con más minutos"],
+      ["Modal de stats", "Apretá S o el botón 📊 para verlo grande"],
+    ],
+  },
+  {
+    title: "Personalización",
+    rows: [
+      ["5 ROMs", "Default / Blade / Matrix / CDProject / Akira"],
+      ["Audio custom", "Subí tu propio sonido de fin (≤50 KB)"],
+      ["Volumen", "Slider en ⚙ Settings"],
+      ["Preferencias de sonido", "On/off, volumen, archivo custom"],
+    ],
+  },
+];
+
+function renderHelp() {
+  if (!helpBody) return;
+  helpBody.innerHTML = "";
+  for (const section of HELP_CONTENT) {
+    const h3 = document.createElement("h3");
+    h3.className = "help__section-title";
+    h3.textContent = `// ${section.title}`;
+    helpBody.appendChild(h3);
+    const dl = document.createElement("dl");
+    dl.className = "help__list";
+    for (const [key, desc] of section.rows) {
+      const dt = document.createElement("dt");
+      dt.className = "help__key";
+      dt.textContent = key;
+      const dd = document.createElement("dd");
+      dd.className = "help__desc";
+      dd.textContent = desc;
+      dl.append(dt, dd);
+    }
+    helpBody.appendChild(dl);
+  }
+}
+
+function openHelp() {
+  if (!helpEl) return;
+  renderHelp();
+  helpEl.hidden = false;
+}
+
+function closeHelp() {
+  if (!helpEl) return;
+  helpEl.hidden = true;
+}
+
+helpBtn && helpBtn.addEventListener("click", openHelp);
+helpClose && helpClose.addEventListener("click", closeHelp);
+helpEl && helpEl.addEventListener("click", (e) => {
+  if (e.target === helpEl) closeHelp();
+});
+
+// --- Stats modal (S / 📊) ---
+// Clon del Mission Log en formato modal. Reusa getStats y las funciones de
+// render existentes para no duplicar lógica.
+function renderStatsModalBody() {
+  if (!statsModalBody) return;
+  // Reusamos el bloque log__body como plantilla: lo clonamos dentro del modal.
+  const original = document.getElementById("log-body");
+  if (!original) return;
+  statsModalBody.innerHTML = "";
+  const clone = original.cloneNode(true);
+  // El clone hereda estilos porque están en .log__stats, .chart, etc.
+  statsModalBody.appendChild(clone);
+}
+
+function openStatsModal() {
+  if (!statsModalEl) return;
+  renderStatsModalBody();
+  statsModalEl.hidden = false;
+}
+
+function closeStatsModal() {
+  if (!statsModalEl) return;
+  statsModalEl.hidden = true;
+}
+
+statsBtn && statsBtn.addEventListener("click", openStatsModal);
+statsModalClose && statsModalClose.addEventListener("click", closeStatsModal);
+statsModalEl && statsModalEl.addEventListener("click", (e) => {
+  if (e.target === statsModalEl) closeStatsModal();
+});
 
 // El AudioContext se crea una sola vez, durante un gesto del usuario (START).
 // Creado más tarde —al completarse la sesión— nacería suspendido y el pitido
@@ -1466,7 +2018,27 @@ function getStats() {
     .sort((a, b) => b.minutes - a.minutes)
     .slice(0, 5);
 
-  return { todayCount, todayMinutes, totalCount, totalMinutes, bestDay, bestCount, streak, last7, topTasks };
+  // Reparto por tag. Cada sesión de focus se atribuye a TODOS los tags de la
+  // tarea que tenía como target. Si la tarea fue borrada o no tenía tags, va
+  // a "untagged" para no perder los minutos en el total.
+  const byTag = new Map();
+  focusSessions.forEach((s) => {
+    if (!s.taskId) return;
+    const live = tasks.find((t) => t.id === s.taskId);
+    const tags = (live && live.tags) || [];
+    const keys = tags.length > 0 ? tags : ["untagged"];
+    keys.forEach((tag) => {
+      const entry = byTag.get(tag) || { tag, minutes: 0, count: 0 };
+      entry.minutes += s.minutes;
+      entry.count++;
+      byTag.set(tag, entry);
+    });
+  });
+  const topTags = [...byTag.values()]
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, 5);
+
+  return { todayCount, todayMinutes, totalCount, totalMinutes, bestDay, bestCount, streak, last7, topTasks, topTags };
 }
 
 function dayKey(d) {
@@ -1474,6 +2046,99 @@ function dayKey(d) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// --- Heatmap calendar ---
+// Grid estilo GitHub: 53 columnas × 7 filas = 364 días (año actual). Color
+// por nivel de minutos enfocados, sobre var(--c-cyan) con alpha creciente.
+function heatmapQuartile(minutes) {
+  if (minutes <= 0) return 0;
+  if (minutes < HEATMAP_Q1) return 1;
+  if (minutes < HEATMAP_Q2) return 2;
+  if (minutes < HEATMAP_Q3) return 3;
+  return 4;
+}
+
+function renderHeatmap() {
+  if (!heatmapWrap || !heatmapYearEl || !heatmapTotalEl) return;
+  const year = new Date().getFullYear();
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+
+  // Agrupa sesiones focus por día del año actual.
+  const byDay = new Map();
+  let totalSessions = 0;
+  let totalMinutes = 0;
+  sessions.forEach((s) => {
+    if (s.mode !== "focus") return;
+    const d = new Date(s.ts);
+    if (d.getFullYear() !== year) return;
+    const k = dayKey(d);
+    byDay.set(k, (byDay.get(k) || 0) + s.minutes);
+    totalSessions++;
+    totalMinutes += s.minutes;
+  });
+
+  const cellSize = 11;
+  const gap = 2;
+  const headerH = 14;
+  const cols = 53;
+  const w = cols * (cellSize + gap);
+  const h = headerH + 7 * (cellSize + gap) + 2;
+
+  heatmapWrap.innerHTML = "";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("preserveAspectRatio", "xMinYMid meet");
+  svg.classList.add("heatmap");
+  svg.setAttribute("aria-label", `Mapa de calor de pomodoros en ${year}`);
+
+  // Etiquetas de mes en la primera fila de cada mes.
+  const monthNames = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"];
+  let lastMonth = -1;
+  for (let m = 0; m < 12; m++) {
+    const first = new Date(year, m, 1);
+    const dayOfYear = Math.round((first - start) / 86400000);
+    const col = Math.floor(dayOfYear / 7);
+    if (col === lastMonth) continue; // muy juntos
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", col * (cellSize + gap));
+    label.setAttribute("y", 10);
+    label.setAttribute("class", "heatmap__month");
+    label.textContent = monthNames[m];
+    svg.appendChild(label);
+    lastMonth = col;
+  }
+
+  // Celdas de cada día del año.
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const k = dayKey(d);
+    const minutes = byDay.get(k) || 0;
+    const dayOfYear = Math.round((d - start) / 86400000);
+    const col = Math.floor(dayOfYear / 7);
+    const row = d.getDay();
+
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    rect.setAttribute("x", col * (cellSize + gap));
+    rect.setAttribute("y", headerH + row * (cellSize + gap));
+    rect.setAttribute("width", cellSize);
+    rect.setAttribute("height", cellSize);
+    rect.setAttribute("rx", 2);
+    rect.dataset.q = String(heatmapQuartile(minutes));
+    rect.dataset.day = k;
+
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${k}: ${formatMinutes(minutes)}`;
+    rect.appendChild(title);
+
+    svg.appendChild(rect);
+  }
+
+  heatmapWrap.appendChild(svg);
+  heatmapYearEl.textContent = year;
+  heatmapTotalEl.textContent = totalSessions === 0
+    ? `${year}: sin sesiones`
+    : `${year}: ${totalSessions} sesion${totalSessions === 1 ? "" : "es"} · ${formatMinutes(totalMinutes)}`;
 }
 
 function renderMissionLog() {
@@ -1542,6 +2207,36 @@ function renderMissionLog() {
     row.append(label, track, num);
     logTasksEl.appendChild(row);
   });
+
+  // Top tags: misma forma de fila que TOP TASKS.
+  logTagsBlock.hidden = stats.topTags.length === 0;
+  logTagsEl.innerHTML = "";
+  const maxTagMin = Math.max(1, ...stats.topTags.map((t) => t.minutes));
+  stats.topTags.forEach((t) => {
+    const row = document.createElement("div");
+    row.className = "chart__row chart__row--task";
+
+    const label = document.createElement("span");
+    label.className = "chart__day chart__day--task";
+    label.textContent = t.tag === "untagged" ? "(sin tag)" : `#${t.tag}`;
+    label.title = label.textContent;
+
+    const track = document.createElement("div");
+    track.className = "chart__track";
+    const fill = document.createElement("div");
+    fill.className = "chart__fill";
+    fill.style.width = `${Math.max(8, (t.minutes / maxTagMin) * 100)}%`;
+    track.appendChild(fill);
+
+    const num = document.createElement("span");
+    num.className = "chart__num";
+    num.textContent = formatMinutes(t.minutes);
+
+    row.append(label, track, num);
+    logTagsEl.appendChild(row);
+  });
+
+  renderHeatmap();
 }
 
 function openLog() {
@@ -1592,6 +2287,7 @@ function exportData() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   playSound("export");
+  toast(`Backup · ${a.download}`);
 }
 
 // Se valida la forma entera ANTES de tocar nada: un archivo corrupto no debe
@@ -1684,7 +2380,7 @@ toggleBtn.addEventListener("click", () => {
 resetBtn.addEventListener("click", reset);
 
 modeBtns.forEach((b) => {
-  b.addEventListener("click", () => setMode(b.dataset.mode));
+  b.addEventListener("click", () => setMode(b.dataset.mode, { fromUser: true }));
 });
 
 cfgBtn.addEventListener("click", () => {
@@ -1740,7 +2436,16 @@ setSoundFile.addEventListener("change", (e) => {
 
 setSoundClearBtn.addEventListener("click", () => clearCustomFile());
 
+// Toggle: pedir nota al terminar focus
+setNotePromptToggle && setNotePromptToggle.addEventListener("click", () => {
+  settings.notePrompt = !settings.notePrompt;
+  saveSettings();
+  updateNotePromptUI();
+});
+
 logToggle.addEventListener("click", toggleLog);
+
+tagFilterClear.addEventListener("click", () => setTagFilter(null));
 
 // Al volver a la pestaña el intervalo pudo haber estado estrangulado: se
 // recalcula de inmediato en vez de esperar al siguiente tick.
@@ -1777,8 +2482,29 @@ document.addEventListener("mouseover", (e) => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (helpEl && !helpEl.hidden) { closeHelp(); return; }
+    if (statsModalEl && !statsModalEl.hidden) { closeStatsModal(); return; }
+    if (paletteEl && !paletteEl.hidden) { closePalette(); return; }
     if (!romMenu.hidden) { closeRomMenu(); return; }
     if (!settingsPanel.hidden) { closeSettings("close"); return; }
+    if (activeTagFilter) { setTagFilter(null); return; }
+  }
+  // Alt+↑/↓ sobre una tarea: reordenar por teclado. Antes del guard de INPUT
+  // porque el checkbox es INPUT pero queremos actuar sobre él.
+  if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    const li = e.target.closest && e.target.closest(".item");
+    if (li && li.dataset.id) {
+      e.preventDefault();
+      moveTaskByKeyboard(li.dataset.id, e.key === "ArrowUp");
+      return;
+    }
+  }
+  // Ctrl/Cmd+K abre el command palette — antes del guard de INPUT para que
+  // también funcione si el foco está en un input.
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    openPalette();
+    return;
   }
   if (e.target.tagName === "INPUT") return;
   if (e.code === "Space") {
@@ -1789,8 +2515,28 @@ document.addEventListener("keydown", (e) => {
     reset();
   } else if (e.key === "l" || e.key === "L") {
     toggleLog();
+  } else if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+    e.preventDefault();
+    openHelp();
+  } else if (e.key === "s" || e.key === "S") {
+    openStatsModal();
   }
 });
+
+function moveTaskByKeyboard(id, up) {
+  if (activeTagFilter) return;
+  const idx = tasks.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const target = up ? idx - 1 : idx + 1;
+  if (target < 0 || target >= tasks.length) return;
+  [tasks[idx], tasks[target]] = [tasks[target], tasks[idx]];
+  saveTasks();
+  renderTasks();
+  // Devolver el foco a la misma tarea en su nueva posición.
+  const moved = list.querySelector(`[data-id="${id}"] .item__checkbox`);
+  if (moved) moved.focus();
+  announce(`Tarea movida a la posición ${target + 1}.`);
+}
 
 // Se pide en el primer START, no al cargar: los navegadores penalizan (y Chrome
 // puede autobloquear) los permisos solicitados sin interacción previa.
@@ -1817,7 +2563,7 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 // ===== INIT =====
 applySettings();
 renderRomMenu();
-applyRom(currentRom);
+applyRom(currentRom, { silent: true });
 updateSoundToggleUI();
 updateVolumeUI();
 updateSoundFileUI();

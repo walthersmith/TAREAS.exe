@@ -77,3 +77,61 @@ Global handler in the EVENTOS section: Space toggles start/pause, `R` resets, `L
 `style.css` is flat BEM (`block__element--modifier`), single file, ordered roughly top-to-bottom by page structure. The retro effects (scanlines, grid, CRT vignette, corner brackets) are `body::before` / `body::after` / `.app::before` / `.app::after` pseudo-elements — those four are load-bearing for the aesthetic, not decoration you can drop.
 
 Only two animations run continuously: `glitch` on the title and `pulse-ring` on the running timer. The `prefers-reduced-motion` block at the end of the file disables exactly those two and shortens the one-shot feedback animations (`flash`, `pomo-flash`) rather than removing them, since they signal that something happened. Any new looping animation belongs in that block.
+
+## Fase 6: tags, drag, note prompt, toasts, heatmap, palette
+
+The previous phases established the core loop and aesthetics; this phase is about breadth — adding things that multiply value across existing surfaces without changing the wall-clock timer invariant or the ROM single-source-of-truth.
+
+### Tags (`#palabra` en el texto)
+
+Tags are not a separate input: they live **inside the task text** as `#word` tokens at submit time. `parseTextAndTags()` strips them and normalizes (lowercase, no `#`, dashes for spaces). When the user types `Fix login #frontend #urgent`, the task is stored as `{text: "Fix login", tags: ["frontend", "urgent"]}` and the field clears. The same parser runs on inline-edit save, so re-typing the `#tokens` updates both fields. `loadTasks` defensively re-runs `normalizeTag` and caps at 5 tags per task — older entries without `tags` get `[]`.
+
+The chip below each task is a button that **toggles a filter** (`activeTagFilter`, module state, not persisted). Click the same chip again to clear; `Esc` clears if a filter is active. While a filter is on, the **counter and tag stats still reflect the unfiltered totals** — the filter is cosmetic, not a "view", so it can't mislead about what's left to do. Drag-to-reorder is disabled while a filter is active (the visible array doesn't represent `tasks[]`).
+
+### Drag-to-reorder
+
+Each `.item` is `draggable="true"`; the handle is the `⠿` glyph that fades in on hover (`opacity: 0` → `0.7` on `.item:hover`). Drop targets are indicated by a 2px cyan inset shadow at top or bottom of the target row depending on cursor Y. `dragstart` sets `dragId`; `drop` calls `reorderTasks(src, dst, before)`. The `editing` and `activeTagFilter` cases bail with `e.preventDefault()` to keep the model consistent with what's visible.
+
+Keyboard equivalent: `Alt+↑` / `Alt+Down` over a task's checkbox swaps it with the neighbour and refocuses the checkbox in its new position (announced via `announce()`). Both gestures coexist with `dblclick` to edit because the checkbox click doesn't interfere with `dragstart`.
+
+### Session note prompt
+
+After a focus session, **before** the sound/notification/auto-advance (the order in `onComplete` was rearranged in this phase), if the tab is visible, a small modal appears: "¿Qué hiciste en este pomodoro? (opcional)" with a single text input. `Enter` saves, `Esc` skips, click-outside is a no-op (must be explicit), 30s timeout auto-skips. The note is appended to the **last** session in `sessions` as `note?: string`. The prompt only fires for `mode === "focus"` — breaks get only a toast + notification.
+
+`tick()` calls `onComplete()` and returns synchronously; the prompt is fire-and-forget (not awaited) so the rest of the session bookkeeping — sound, notification, mode advance — runs immediately, and the note simply updates `sessions[sessions.length - 1]` when the user resolves it. The `settled` flag (analogous to the edit input) prevents double-commit if Enter + a button click race.
+
+### Toasts
+
+Stack of up to 3 in the bottom-right, 4s TTL, click to dismiss. Wired into: task completion, ROM switch, backup export, and every session end (focus gets toast + note modal; breaks get only toast). The container is `aria-live="polite"`; each toast is `role="status"` so screen readers announce them. No looping animation — single `toast-in` (slide+fade) on entry and `toast-out` on exit, both listed in the `prefers-reduced-motion` block.
+
+### Heatmap calendar
+
+SVG grid in Mission Log: 53 columns × 7 rows = 364 days of the current year. Each cell is colored by intensity quartile (`<15m`, `<45m`, `<90m`, `<150m`, `150m+`) over `rgba(var(--c-cyan), 0.30/0.55/0.80/1.0)` plus a `0` level at `0.08`. Month labels at the top of the first column of each month that doesn't collide with the previous one. Native `<title>` element provides hover tooltip with date + minutes. Year total line below: `"2026: 412 sesiones · 103h 20m"`.
+
+The cells reference the active ROM palette at varying alpha — never hex. If a day lands in the empty quartile it still gets a faint outline so the grid is visible. `renderHeatmap()` reads `sessions` directly (no `getStats` dependency) so it can be invoked from anywhere.
+
+### Command palette (Ctrl/Cmd+K)
+
+Overlay with fuzzy-substring search over an `ACTIONS` array. Each action is `{id, label, kw, run}`; `run` invokes the same code path as the existing button or shortcut — no duplicated logic. Categories: timer (start/pause/reset, mode switch), tasks (add, clear), log (open/close/toggle), settings (open), ROMs (5), data (export, import), and filter-clear.
+
+`↑/↓` move the active item (wrap-around), `Enter` runs, `Esc` closes. Click on the backdrop closes; clicks inside the panel do not. `Ctrl/Cmd+K` works even when focus is in an `INPUT` — the handler runs before the `INPUT` guard, with `e.preventDefault()` to suppress Chrome's address-bar focus. The handler is in the global `keydown` listener (not a separate one) because both code paths need to coexist with the other shortcuts.
+
+### New keyboard shortcuts (extending the existing list)
+
+| Key | Action |
+|---|---|
+| `Ctrl/Cmd+K` | open command palette |
+| `Esc` (palette open) | close palette (before any other Esc handling) |
+| `Esc` (filter active) | clear tag filter |
+| `Alt+↑` / `Alt+↓` (on task checkbox) | move task up/down |
+
+The `Esc` chain in the global handler is: palette → ROM menu → settings → tag filter. Each handler only consumes the key when its surface is visible, then returns.
+
+### Schema additions (additive, defensively loaded)
+
+| Slice | New field | Loader behavior |
+|---|---|---|
+| `todo-app:tasks` | `tags?: string[]` (≤5, normalized) | `loadTasks` re-normalizes via `normalizeTag`; old tasks without `tags` get `[]` |
+| `todo-app:sessions` | `note?: string` (≤200) | `loadSessions` already passes unknown fields through |
+
+`parseBackup` is unchanged — the envelope dumps raw `localStorage` strings, so old backups load fine and `loadTasks`/`loadSessions` quietly fill the new fields.
