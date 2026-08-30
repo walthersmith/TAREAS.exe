@@ -1134,7 +1134,13 @@ document.addEventListener("keydown", (e) => {
 
 // Se pide en el primer START, no al cargar: los navegadores penalizan (y Chrome
 // puede autobloquear) los permisos solicitados sin interacción previa.
+// La bandera a nivel de módulo garantiza que solo se llame una vez por carga
+// de página, aunque por la razón que sea Notification.permission siga siendo
+// "default" tras una respuesta (p. ej. file:// en ciertos navegadores).
+let notificationPermissionRequested = false;
 function requestNotificationPermission() {
+  if (notificationPermissionRequested) return;
+  notificationPermissionRequested = true;
   if ("Notification" in window && Notification.permission === "default") {
     Notification.requestPermission();
   }
