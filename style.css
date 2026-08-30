@@ -28,34 +28,12 @@
   --completed: var(--neon-pink);
 }
 
-/* ---------- ROM PALETTES ---------- */
-:root[data-rom="blade"] {
-  --c-cyan: 255, 157, 0;     /* amber */
-  --c-pink: 255, 0, 60;      /* red */
-  --c-purple: 255, 242, 0;   /* yellow */
-  --c-yellow: 255, 217, 102; /* warm yellow */
-}
-
-:root[data-rom="matrix"] {
-  --c-cyan: 0, 255, 65;      /* green */
-  --c-pink: 255, 0, 51;      /* red (system error) */
-  --c-purple: 57, 255, 20;   /* bright green */
-  --c-yellow: 173, 255, 47;  /* lime */
-}
-
-:root[data-rom="cdproject"] {
-  --c-cyan: 252, 238, 10;    /* yellow (V's iconic) */
-  --c-pink: 0, 240, 255;     /* cyan */
-  --c-purple: 255, 0, 60;    /* red */
-  --c-yellow: 255, 242, 0;   /* warm yellow */
-}
-
-:root[data-rom="akira"] {
-  --c-cyan: 255, 0, 51;      /* red */
-  --c-pink: 255, 215, 0;     /* gold */
-  --c-purple: 255, 85, 0;    /* orange */
-  --c-yellow: 255, 235, 59;  /* bright yellow */
-}
+/* ---------- ROM PALETTES ----------
+   Las paletas viven en el objeto ROMS de app.js, que escribe estas mismas
+   variables sobre :root al aplicar un tema. Los valores de arriba son sólo
+   la paleta por defecto, para el instante previo a que corra el script.
+   No añadas aquí bloques [data-rom="..."]: se duplicarían y habría que
+   mantenerlos sincronizados a mano. */
 
 * {
   box-sizing: border-box;

@@ -264,12 +264,25 @@ function loadRom() {
 
 let currentRom = loadRom();
 
+// ROMS es la única fuente de verdad de los colores: applyRom() escribe las
+// variables CSS. El :root del stylesheet sólo conserva la paleta por defecto,
+// para que la app se vea bien en el instante previo a que corra este script.
 function applyRom(romKey) {
-  if (!ROMS[romKey]) return;
+  const rom = ROMS[romKey];
+  if (!rom) return;
   currentRom = romKey;
   localStorage.setItem(ROM_KEY, romKey);
-  document.documentElement.setAttribute("data-rom", romKey);
-  romNameEl.textContent = ROMS[romKey].name;
+
+  const root = document.documentElement;
+  root.setAttribute("data-rom", romKey);
+  // Se escriben como componentes RGB sueltos ("0, 245, 255") porque el CSS
+  // los reutiliza con alfa variable vía rgba(var(--c-cyan), 0.35).
+  root.style.setProperty("--c-cyan", rom.primary.join(", "));
+  root.style.setProperty("--c-pink", rom.accent.join(", "));
+  root.style.setProperty("--c-purple", rom.tertiary.join(", "));
+  root.style.setProperty("--c-yellow", rom.highlight.join(", "));
+
+  romNameEl.textContent = rom.name;
   romMenu.querySelectorAll(".rom-option").forEach((opt) => {
     opt.classList.toggle("rom-option--active", opt.dataset.rom === romKey);
   });
