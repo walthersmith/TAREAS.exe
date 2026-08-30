@@ -7,7 +7,8 @@ const LOG_KEY = "todo-app:log-open";
 const ROM_KEY = "todo-app:rom";
 const RING_CIRCUMFERENCE = 2 * Math.PI * 88;
 
-const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15 };
+const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4 };
+const MAX_CYCLES = 12;
 const POMO_VISIBLE_MAX = 5;
 
 // Cada ROM define los 4 slots semánticos del tema.
@@ -60,6 +61,7 @@ let tasks = loadTasks();
 let timer = loadTimer();
 let sessions = loadSessions();
 let activeTaskId = null;
+let editingTaskId = null;
 
 // ===== ELEMENTOS =====
 const form = document.getElementById("form");
@@ -67,6 +69,9 @@ const input = document.getElementById("input");
 const list = document.getElementById("list");
 const counter = document.getElementById("counter");
 const clearBtn = document.getElementById("clear-completed");
+const exportBtn = document.getElementById("export-btn");
+const importBtn = document.getElementById("import-btn");
+const importFile = document.getElementById("import-file");
 const empty = document.getElementById("empty");
 
 const timerEl = document.getElementById("timer");
@@ -84,6 +89,7 @@ const settingsPanel = document.getElementById("settings");
 const setFocusInput = document.getElementById("set-focus");
 const setShortInput = document.getElementById("set-short");
 const setLongInput = document.getElementById("set-long");
+const setCyclesInput = document.getElementById("set-cycles");
 const settingsSaveBtn = document.getElementById("settings-save");
 const settingsCancelBtn = document.getElementById("settings-cancel");
 
@@ -98,6 +104,8 @@ const logTotalMinEl = document.getElementById("log-total-min");
 const logBestEl = document.getElementById("log-best");
 const logBestDateEl = document.getElementById("log-best-date");
 const logChartEl = document.getElementById("log-chart");
+const logTasksEl = document.getElementById("log-tasks");
+const logTasksBlock = document.getElementById("log-tasks-block");
 
 const romPicker = document.getElementById("rom-picker");
 const romCurrent = document.getElementById("rom-current");
@@ -183,14 +191,15 @@ function loadSettings() {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw);
-    const clamp = (v, fb) => {
+    const clamp = (v, fb, max = 999) => {
       const n = parseInt(v);
-      return Number.isFinite(n) && n >= 1 && n <= 999 ? n : fb;
+      return Number.isFinite(n) && n >= 1 && n <= max ? n : fb;
     };
     return {
       focus: clamp(parsed.focus, DEFAULT_SETTINGS.focus),
       short: clamp(parsed.short, DEFAULT_SETTINGS.short),
       long:  clamp(parsed.long,  DEFAULT_SETTINGS.long),
+      cycles: clamp(parsed.cycles, DEFAULT_SETTINGS.cycles, MAX_CYCLES),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -221,6 +230,7 @@ function openSettings() {
   setFocusInput.value = settings.focus;
   setShortInput.value = settings.short;
   setLongInput.value  = settings.long;
+  setCyclesInput.value = settings.cycles;
   setFocusInput.focus();
   setFocusInput.select();
 }
@@ -231,14 +241,15 @@ function closeSettings() {
 }
 
 function commitSettings() {
-  const clamp = (input, fallback) => {
+  const clamp = (input, fallback, max = 999) => {
     const n = parseInt(input.value);
-    return Number.isFinite(n) && n >= 1 && n <= 999 ? n : fallback;
+    return Number.isFinite(n) && n >= 1 && n <= max ? n : fallback;
   };
   settings = {
     focus: clamp(setFocusInput, settings.focus),
     short: clamp(setShortInput, settings.short),
     long:  clamp(setLongInput,  settings.long),
+    cycles: clamp(setCyclesInput, settings.cycles, MAX_CYCLES),
   };
   saveSettings();
   closeSettings();
@@ -340,6 +351,7 @@ function buildPomodoroBar(count) {
 
 function renderTasks() {
   list.innerHTML = "";
+  let toFocus = null;
 
   for (const task of tasks) {
     const li = document.createElement("li");
@@ -356,10 +368,17 @@ function renderTasks() {
     checkbox.setAttribute("aria-label", "Marcar como completada");
     checkbox.addEventListener("change", () => toggle(task.id));
 
-    const text = document.createElement("span");
-    text.className = "item__text";
-    text.textContent = task.text;
-    text.addEventListener("click", () => setActiveTask(task.id));
+    let body;
+    if (task.id === editingTaskId) {
+      body = buildEditInput(task);
+      toFocus = body;
+    } else {
+      body = document.createElement("span");
+      body.className = "item__text";
+      body.textContent = task.text;
+      body.title = "Doble clic para editar";
+      body.addEventListener("dblclick", () => startEditing(task.id));
+    }
 
     const focusBtn = document.createElement("button");
     focusBtn.type = "button";
@@ -376,12 +395,17 @@ function renderTasks() {
     del.textContent = "×";
     del.addEventListener("click", () => removeTask(task.id));
 
-    li.append(checkbox, text);
+    li.append(checkbox, body);
     if (task.pomodoros > 0) {
       li.appendChild(buildPomodoroBar(task.pomodoros));
     }
     li.append(focusBtn, del);
     list.appendChild(li);
+  }
+
+  if (toFocus) {
+    toFocus.focus();
+    toFocus.select();
   }
 
   const pending = tasks.filter((t) => !t.done).length;
@@ -392,6 +416,67 @@ function renderTasks() {
 
   empty.hidden = tasks.length > 0;
 
+  renderActiveTask();
+}
+
+// ===== EDICIÓN EN LÍNEA =====
+// Enter guarda, Escape descarta, perder el foco guarda. El flag `settled`
+// evita que el blur provocado por el propio re-render vuelva a disparar el
+// guardado después de cancelar.
+function buildEditInput(task) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "item__edit";
+  input.value = task.text;
+  input.maxLength = 200;
+  input.setAttribute("aria-label", "Editar tarea");
+
+  let settled = false;
+  const commit = () => {
+    if (settled) return;
+    settled = true;
+    finishEditing(input.value);
+  };
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    finishEditing(null);
+  };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
+  return input;
+}
+
+function startEditing(id) {
+  const task = tasks.find((t) => t.id === id);
+  if (!task || task.done) return;
+  editingTaskId = id;
+  renderTasks();
+}
+
+// newText === null cancela. Un texto vacío también se descarta: borrar una
+// tarea es cosa del botón ×, no un efecto lateral de vaciar el campo.
+function finishEditing(newText) {
+  const task = tasks.find((t) => t.id === editingTaskId);
+  editingTaskId = null;
+  if (task && newText !== null) {
+    const trimmed = newText.trim();
+    if (trimmed && trimmed !== task.text) {
+      task.text = trimmed;
+      saveTasks();
+    }
+  }
+  renderTasks();
   renderActiveTask();
 }
 
@@ -483,11 +568,31 @@ function renderTimer() {
     b.classList.toggle("timer__mode--active", b.dataset.mode === timer.mode);
   });
 
-  const lit = timer.cycles % 4;
-  const dots = cyclesEl.querySelectorAll(".dot");
-  dots.forEach((d, i) => d.classList.toggle("dot--on", i < lit));
+  // Los puntos se generan según los ciclos configurados, no fijos a 4.
+  const lit = timer.cycles % settings.cycles;
+  if (cyclesEl.children.length !== settings.cycles) {
+    cyclesEl.innerHTML = "";
+    for (let i = 0; i < settings.cycles; i++) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      cyclesEl.appendChild(dot);
+    }
+  }
+  cyclesEl.setAttribute("aria-label", `${lit} de ${settings.cycles} focus hasta el descanso largo`);
+  [...cyclesEl.children].forEach((d, i) => d.classList.toggle("dot--on", i < lit));
 
+  updateDocumentTitle();
   saveTimer();
+}
+
+// La cuenta atrás en el título deja ver el tiempo restante sin volver a la
+// pestaña; en reposo se restaura el título original.
+const BASE_TITLE = document.title;
+
+function updateDocumentTitle() {
+  document.title = timer.running
+    ? `${format(timer.remaining)} · ${MODES[timer.mode].label}`
+    : BASE_TITLE;
 }
 
 function renderActiveTask() {
@@ -568,12 +673,15 @@ function onComplete({ silent = false } = {}) {
     flashTimer();
   }
 
-  // Log session
+  // Log session. Se guarda también el texto de la tarea para que el historial
+  // sobreviva a su borrado; los registros antiguos se resuelven por taskId.
+  const activeTask = tasks.find((t) => t.id === activeTaskId);
   sessions.push({
     ts: Date.now(),
     mode: finishedMode,
     minutes: finishedMinutes,
     taskId: finishedMode === "focus" ? activeTaskId : null,
+    taskText: finishedMode === "focus" && activeTask ? activeTask.text : null,
   });
   saveSessions();
 
@@ -597,7 +705,7 @@ function onComplete({ silent = false } = {}) {
 
   if (finishedMode === "focus") {
     timer.cycles++;
-    const nextMode = timer.cycles % 4 === 0 ? "long" : "short";
+    const nextMode = timer.cycles % settings.cycles === 0 ? "long" : "short";
     setMode(nextMode);
   } else {
     setMode("focus");
@@ -702,7 +810,32 @@ function getStats() {
     });
   }
 
-  return { todayCount, todayMinutes, totalCount, totalMinutes, bestDay, bestCount, streak, last7 };
+  // Reparto por tarea: agrupa las sesiones de focus que tenían un target.
+  // El nombre sale del registro (taskText) y, si es antiguo, del taskId; una
+  // tarea ya borrada se marca como eliminada en vez de desaparecer del total.
+  const byTask = new Map();
+  focusSessions.forEach((s) => {
+    if (!s.taskId) return;
+    const entry = byTask.get(s.taskId) || { id: s.taskId, name: null, count: 0, minutes: 0 };
+    entry.count++;
+    entry.minutes += s.minutes;
+    if (s.taskText) entry.name = s.taskText;
+    byTask.set(s.taskId, entry);
+  });
+  const topTasks = [...byTask.values()]
+    .map((e) => {
+      const live = tasks.find((t) => t.id === e.id);
+      return {
+        ...e,
+        name: live ? live.text : e.name,
+        gone: !live,
+      };
+    })
+    .filter((e) => e.name)
+    .sort((a, b) => b.minutes - a.minutes)
+    .slice(0, 5);
+
+  return { todayCount, todayMinutes, totalCount, totalMinutes, bestDay, bestCount, streak, last7, topTasks };
 }
 
 function dayKey(d) {
@@ -749,6 +882,35 @@ function renderMissionLog() {
     row.append(label, track, num);
     logChartEl.appendChild(row);
   });
+
+  // Top tasks: mismo markup de fila que el gráfico, escalado por minutos.
+  logTasksBlock.hidden = stats.topTasks.length === 0;
+  logTasksEl.innerHTML = "";
+  const maxMin = Math.max(1, ...stats.topTasks.map((t) => t.minutes));
+  stats.topTasks.forEach((t) => {
+    const row = document.createElement("div");
+    row.className = "chart__row chart__row--task";
+
+    const label = document.createElement("span");
+    label.className = "chart__day chart__day--task";
+    label.textContent = t.name;
+    label.title = t.gone ? `${t.name} (eliminada)` : t.name;
+    if (t.gone) label.classList.add("chart__day--gone");
+
+    const track = document.createElement("div");
+    track.className = "chart__track";
+    const fill = document.createElement("div");
+    fill.className = "chart__fill";
+    fill.style.width = `${Math.max(8, (t.minutes / maxMin) * 100)}%`;
+    track.appendChild(fill);
+
+    const num = document.createElement("span");
+    num.className = "chart__num";
+    num.textContent = formatMinutes(t.minutes);
+
+    row.append(label, track, num);
+    logTasksEl.appendChild(row);
+  });
 }
 
 function openLog() {
@@ -770,6 +932,92 @@ function toggleLog() {
   else openLog();
 }
 
+// ===== EXPORTAR / IMPORTAR =====
+// Todo el estado vive en localStorage: sin una copia, limpiar los datos del
+// navegador borra el historial sin vuelta atrás.
+const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY];
+
+function exportData() {
+  const data = {};
+  DATA_KEYS.forEach((k) => {
+    const v = localStorage.getItem(k);
+    if (v !== null) data[k] = v;
+  });
+
+  const payload = {
+    app: "tareas.exe",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data,
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `tareas-${dayKey(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Se valida la forma entera ANTES de tocar nada: un archivo corrupto no debe
+// dejar el estado a medio sobrescribir.
+function parseBackup(raw) {
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || !parsed.data || typeof parsed.data !== "object") {
+    throw new Error("no parece una copia de esta app");
+  }
+  const entries = Object.entries(parsed.data).filter(([k]) => DATA_KEYS.includes(k));
+  if (entries.length === 0) throw new Error("no contiene datos reconocibles");
+  for (const [k, v] of entries) {
+    if (typeof v !== "string") throw new Error(`el campo ${k} está corrupto`);
+  }
+  // Las claves que guardan JSON deben poder parsearse.
+  for (const [k, v] of entries) {
+    if (k === LOG_KEY || k === ROM_KEY) continue;
+    try {
+      JSON.parse(v);
+    } catch {
+      throw new Error(`el campo ${k} no es JSON válido`);
+    }
+  }
+  return entries;
+}
+
+function importData(raw) {
+  let entries;
+  try {
+    entries = parseBackup(raw);
+  } catch (e) {
+    alert(`No se pudo importar: ${e.message}.\n\nNo se ha cambiado nada.`);
+    return;
+  }
+
+  const summary = (() => {
+    try {
+      const t = entries.find(([k]) => k === STORAGE_KEY);
+      const s = entries.find(([k]) => k === SESSIONS_KEY);
+      const nT = t ? JSON.parse(t[1]).length : 0;
+      const nS = s ? JSON.parse(s[1]).length : 0;
+      return `${nT} tarea(s) y ${nS} sesión(es)`;
+    } catch {
+      return "los datos del archivo";
+    }
+  })();
+
+  if (!confirm(`Se van a restaurar ${summary}.\n\nEsto SUSTITUYE tus tareas, sesiones y ajustes actuales y no se puede deshacer.\n\n¿Continuar?`)) {
+    return;
+  }
+
+  pause();
+  DATA_KEYS.forEach((k) => localStorage.removeItem(k));
+  entries.forEach(([k, v]) => localStorage.setItem(k, v));
+  // Recargar es la forma más segura de re-inicializar todo el estado a la vez.
+  location.reload();
+}
+
 // ===== EVENTOS =====
 form.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -779,6 +1027,21 @@ form.addEventListener("submit", (e) => {
 });
 
 clearBtn.addEventListener("click", clearCompleted);
+
+exportBtn.addEventListener("click", exportData);
+
+importBtn.addEventListener("click", () => importFile.click());
+
+importFile.addEventListener("change", () => {
+  const file = importFile.files && importFile.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => importData(String(reader.result));
+  reader.onerror = () => alert("No se pudo leer el archivo.");
+  reader.readAsText(file);
+  // Permite volver a elegir el mismo archivo si el intento anterior falló.
+  importFile.value = "";
+});
 
 toggleBtn.addEventListener("click", () => {
   if (timer.running) pause();
@@ -799,7 +1062,7 @@ cfgBtn.addEventListener("click", () => {
 settingsSaveBtn.addEventListener("click", commitSettings);
 settingsCancelBtn.addEventListener("click", closeSettings);
 
-[setFocusInput, setShortInput, setLongInput].forEach((input) => {
+[setFocusInput, setShortInput, setLongInput, setCyclesInput].forEach((input) => {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") commitSettings();
     if (e.key === "Escape") closeSettings();
@@ -849,6 +1112,14 @@ function requestNotificationPermission() {
   if ("Notification" in window && Notification.permission === "default") {
     Notification.requestPermission();
   }
+}
+
+// Registro del service worker. Guardado por protocolo: abriendo el archivo por
+// file:// no hay service workers, y registrarlo lanzaría un error en consola.
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
 }
 
 // ===== INIT =====
