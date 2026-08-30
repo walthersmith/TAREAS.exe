@@ -6,6 +6,7 @@ const SESSIONS_KEY = "todo-app:sessions";
 const LOG_KEY = "todo-app:log-open";
 const ROM_KEY = "todo-app:rom";
 const SOUND_KEY = "todo-app:sound";
+const CUSTOM_ROM_KEY = "todo-app:custom-roms";
 const RING_CIRCUMFERENCE = 2 * Math.PI * 88;
 
 const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4, notePrompt: true };
@@ -186,6 +187,17 @@ const romCurrent = document.getElementById("rom-current");
 const romNameEl = document.getElementById("rom-name");
 const romMenu = document.getElementById("rom-menu");
 
+const customRomEl = document.getElementById("custom-rom");
+const customRomClose = document.getElementById("custom-rom-close");
+const customRomCancel = document.getElementById("custom-rom-cancel");
+const customRomSave = document.getElementById("custom-rom-save");
+const customRomNameInput = document.getElementById("custom-rom-name");
+const customRomPrimaryInput = document.getElementById("custom-rom-primary");
+const customRomAccentInput = document.getElementById("custom-rom-accent");
+const customRomTertiaryInput = document.getElementById("custom-rom-tertiary");
+const customRomHighlightInput = document.getElementById("custom-rom-highlight");
+const customRomPreview = document.getElementById("custom-rom-preview");
+
 // ===== PERSISTENCIA =====
 function loadTasks() {
   try {
@@ -358,12 +370,64 @@ function commitSettings() {
 }
 
 // ===== ROM (theme) =====
-function loadRom() {
-  const saved = localStorage.getItem(ROM_KEY);
-  return ROMS[saved] ? saved : "default";
+function loadCustomRoms() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_ROM_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((r) => isValidRom(r)) : [];
+  } catch {
+    return [];
+  }
 }
 
+function saveCustomRoms() {
+  localStorage.setItem(CUSTOM_ROM_KEY, JSON.stringify(customRoms));
+}
+
+function isValidRom(r) {
+  return r
+    && typeof r.id === "string"
+    && typeof r.name === "string"
+    && Array.isArray(r.primary) && r.primary.length === 3
+    && Array.isArray(r.accent) && r.accent.length === 3
+    && Array.isArray(r.tertiary) && r.tertiary.length === 3
+    && Array.isArray(r.highlight) && r.highlight.length === 3
+    && r.primary.every(Number.isFinite)
+    && r.accent.every(Number.isFinite)
+    && r.tertiary.every(Number.isFinite)
+    && r.highlight.every(Number.isFinite);
+}
+
+function findRom(key) {
+  if (ROMS[key]) return { rom: ROMS[key], isCustom: false };
+  const custom = customRoms.find((r) => r.id === key);
+  if (custom) return { rom: custom, isCustom: true };
+  return null;
+}
+
+function loadRom() {
+  const saved = localStorage.getItem(ROM_KEY);
+  if (!saved) return "default";
+  if (ROMS[saved]) return saved;
+  // Custom ROM guardada puede haber sido borrada: caemos al default.
+  const found = customRoms.find((r) => r.id === saved);
+  return found ? saved : "default";
+}
+
+let customRoms = loadCustomRoms();
 let currentRom = loadRom();
+
+// Convierte "#rrggbb" a [r, g, b]. Acepta hex con o sin '#'.
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || ""));
+  if (!m) return null;
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
+function rgbToHex([r, g, b]) {
+  return "#" + [r, g, b].map((x) => Math.max(0, Math.min(255, x)).toString(16).padStart(2, "0")).join("");
+}
 
 // ROMS es la única fuente de verdad de los colores: applyRom() escribe las
 // variables CSS. El :root del stylesheet sólo conserva la paleta por defecto,
@@ -371,8 +435,9 @@ let currentRom = loadRom();
 // `silent` suprime sonido + toast: lo usa INIT para no anunciar el ROM al
 // cargar la página.
 function applyRom(romKey, { silent = false } = {}) {
-  const rom = ROMS[romKey];
-  if (!rom) return;
+  const found = findRom(romKey);
+  if (!found) return;
+  const { rom } = found;
   currentRom = romKey;
   localStorage.setItem(ROM_KEY, romKey);
 
@@ -397,7 +462,8 @@ function applyRom(romKey, { silent = false } = {}) {
 
 function renderRomMenu() {
   romMenu.innerHTML = "";
-  for (const [key, rom] of Object.entries(ROMS)) {
+
+  const buildOption = (key, rom, isCustom) => {
     const li = document.createElement("li");
     li.className = "rom-option" + (key === currentRom ? " rom-option--active" : "");
     li.dataset.rom = key;
@@ -414,18 +480,72 @@ function renderRomMenu() {
     const name = document.createElement("span");
     name.className = "rom-option__name";
     name.textContent = rom.name;
+    name.title = isCustom ? "Click para activar · click × para borrar" : "";
 
     const check = document.createElement("span");
     check.className = "rom-option__check";
     check.textContent = "✓";
 
     li.append(swatches, name, check);
-    li.addEventListener("click", () => {
+    li.addEventListener("click", (e) => {
+      // Si el click fue en el botón de borrar (sólo en custom), no activar.
+      if (e.target.classList.contains("rom-option__delete")) return;
       applyRom(key);
       closeRomMenu();
     });
-    romMenu.appendChild(li);
+
+    if (isCustom) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "rom-option__delete";
+      del.setAttribute("aria-label", `Borrar ROM ${rom.name}`);
+      del.title = "Borrar este ROM";
+      del.textContent = "×";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteCustomRom(key);
+      });
+      li.appendChild(del);
+    }
+
+    return li;
+  };
+
+  for (const [key, rom] of Object.entries(ROMS)) {
+    romMenu.appendChild(buildOption(key, rom, false));
   }
+
+  if (customRoms.length > 0) {
+    const sep = document.createElement("li");
+    sep.className = "rom-option__separator";
+    sep.setAttribute("role", "separator");
+    romMenu.appendChild(sep);
+    for (const rom of customRoms) {
+      romMenu.appendChild(buildOption(rom.id, rom, true));
+    }
+  }
+
+  // Botón "+ NEW" al final del menú
+  const addBtn = document.createElement("li");
+  addBtn.className = "rom-option rom-option--add";
+  addBtn.setAttribute("role", "option");
+  addBtn.textContent = "+ NEW ROM";
+  addBtn.title = "Crear un ROM personalizado";
+  addBtn.addEventListener("click", () => {
+    closeRomMenu();
+    openCustomRomModal();
+  });
+  romMenu.appendChild(addBtn);
+}
+
+function deleteCustomRom(id) {
+  customRoms = customRoms.filter((r) => r.id !== id);
+  saveCustomRoms();
+  if (currentRom === id) {
+    applyRom("default");
+  }
+  renderRomMenu();
+  toast(`ROM borrado`);
 }
 
 function openRomMenu() {
@@ -444,6 +564,76 @@ function toggleRomMenu() {
   if (romMenu.hidden) openRomMenu();
   else closeRomMenu();
 }
+
+// --- Modal de creación de ROM custom ---
+// Pre-rellena con los colores del ROM actual para que sea fácil "forkear".
+function openCustomRomModal() {
+  const current = findRom(currentRom);
+  const seed = current ? current.rom : ROMS.default;
+  customRomNameInput.value = "";
+  customRomPrimaryInput.value = rgbToHex(seed.primary);
+  customRomAccentInput.value = rgbToHex(seed.accent);
+  customRomTertiaryInput.value = rgbToHex(seed.tertiary);
+  customRomHighlightInput.value = rgbToHex(seed.highlight);
+  customRomEl.hidden = false;
+  updateCustomRomPreview();
+  setTimeout(() => customRomNameInput.focus(), 30);
+}
+
+function closeCustomRomModal() {
+  if (customRomEl.hidden) return;
+  customRomEl.hidden = true;
+}
+
+function updateCustomRomPreview() {
+  if (!customRomPreview) return;
+  const slots = ["primary", "accent", "tertiary", "highlight"];
+  slots.forEach((slot) => {
+    const sw = customRomPreview.querySelector(`[data-slot="${slot}"]`);
+    if (!sw) return;
+    const input = document.getElementById(`custom-rom-${slot}`);
+    sw.style.background = input.value;
+  });
+}
+
+function saveCustomRomFromForm() {
+  const name = (customRomNameInput.value || "").trim();
+  if (!name) {
+    customRomNameInput.focus();
+    return;
+  }
+  const primary = hexToRgb(customRomPrimaryInput.value);
+  const accent = hexToRgb(customRomAccentInput.value);
+  const tertiary = hexToRgb(customRomTertiaryInput.value);
+  const highlight = hexToRgb(customRomHighlightInput.value);
+  if (!primary || !accent || !tertiary || !highlight) return;
+
+  const id = "custom-" + uid();
+  const rom = { id, name: name.toUpperCase().slice(0, 20), primary, accent, tertiary, highlight };
+  customRoms.push(rom);
+  saveCustomRoms();
+  renderRomMenu();
+  applyRom(id);
+  closeCustomRomModal();
+  toast(`ROM guardado: ${rom.name}`);
+}
+
+customRomPrimaryInput && customRomPrimaryInput.addEventListener("input", updateCustomRomPreview);
+customRomAccentInput && customRomAccentInput.addEventListener("input", updateCustomRomPreview);
+customRomTertiaryInput && customRomTertiaryInput.addEventListener("input", updateCustomRomPreview);
+customRomHighlightInput && customRomHighlightInput.addEventListener("input", updateCustomRomPreview);
+customRomClose && customRomClose.addEventListener("click", closeCustomRomModal);
+customRomCancel && customRomCancel.addEventListener("click", closeCustomRomModal);
+customRomSave && customRomSave.addEventListener("click", saveCustomRomFromForm);
+// Enter en el form (nombre) guarda; Esc cierra.
+customRomNameInput && customRomNameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); saveCustomRomFromForm(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeCustomRomModal(); }
+});
+// Click en el backdrop cierra; click en el panel no.
+customRomEl && customRomEl.addEventListener("click", (e) => {
+  if (e.target === customRomEl) closeCustomRomModal();
+});
 
 // ===== TASKS =====
 function uid() {
@@ -1125,7 +1315,8 @@ const ACTIONS = [
   { id: "rom-blade",     label: "ROM · BLADE",    kw: "rom theme blade",           run: () => applyRom("blade") },
   { id: "rom-matrix",    label: "ROM · MATRIX",   kw: "rom theme matrix green",    run: () => applyRom("matrix") },
   { id: "rom-cdproject", label: "ROM · CDPROJECT",kw: "rom theme cdproject yellow",run: () => applyRom("cdproject") },
-  { id: "rom-akira",     label: "ROM · AKIRA",    kw: "rom theme akira red",      run: () => applyRom("akira") },
+  { id: "rom-akira",     label: "ROM · AKIRA",    kw: "rom theme akira red",       run: () => applyRom("akira") },
+  { id: "rom-custom",    label: "Crear ROM custom", kw: "rom custom nuevo create",  run: () => openCustomRomModal() },
   // Data
   { id: "export",       label: "Exportar datos",           kw: "export backup download", run: () => exportData() },
   { id: "import",       label: "Importar datos",           kw: "import restore upload",  run: () => importFile.click() },
@@ -1253,7 +1444,8 @@ const HELP_CONTENT = [
   {
     title: "Personalización",
     rows: [
-      ["5 ROMs", "Default / Blade / Matrix / CDProject / Akira"],
+      ["5 ROMs built-in", "Default / Blade / Matrix / CDProject / Akira"],
+      ["Custom ROM", "Menú ROM → '+ NEW ROM' · 4 colores + nombre"],
       ["Audio custom", "Subí tu propio sonido de fin (≤50 KB)"],
       ["Volumen", "Slider en ⚙ Settings"],
       ["Preferencias de sonido", "On/off, volumen, archivo custom"],
@@ -2261,7 +2453,7 @@ function toggleLog() {
 // ===== EXPORTAR / IMPORTAR =====
 // Todo el estado vive en localStorage: sin una copia, limpiar los datos del
 // navegador borra el historial sin vuelta atrás.
-const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY];
+const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY, CUSTOM_ROM_KEY];
 
 function exportData() {
   const data = {};
@@ -2485,6 +2677,7 @@ document.addEventListener("keydown", (e) => {
     if (helpEl && !helpEl.hidden) { closeHelp(); return; }
     if (statsModalEl && !statsModalEl.hidden) { closeStatsModal(); return; }
     if (paletteEl && !paletteEl.hidden) { closePalette(); return; }
+    if (customRomEl && !customRomEl.hidden) { closeCustomRomModal(); return; }
     if (!romMenu.hidden) { closeRomMenu(); return; }
     if (!settingsPanel.hidden) { closeSettings("close"); return; }
     if (activeTagFilter) { setTagFilter(null); return; }

@@ -1825,6 +1825,179 @@ input[type="range"]::-moz-range-thumb {
   display: block !important;
 }
 
+/* ---------- CUSTOM ROM MODAL ---------- */
+.custom-rom {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 108;
+  padding: 20px;
+  animation: sn-fade 0.18s ease-out;
+}
+.custom-rom[hidden] { display: none; }
+.custom-rom__panel {
+  background: var(--card-bg);
+  border: 1px solid var(--neon-purple);
+  width: min(520px, 100%);
+  box-shadow: var(--glow-purple);
+  animation: sn-pop 0.22s ease-out;
+}
+.custom-rom__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(var(--c-purple), 0.3);
+}
+.custom-rom__title {
+  margin: 0;
+  color: var(--neon-purple);
+  letter-spacing: 2px;
+  font-size: 14px;
+}
+.custom-rom__close {
+  background: transparent;
+  border: 1px solid rgba(var(--c-purple), 0.4);
+  color: var(--neon-purple);
+  font-family: inherit;
+  font-size: 16px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.custom-rom__close:hover { background: rgba(var(--c-purple), 0.15); }
+.custom-rom__body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.custom-rom__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-rom__label {
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+}
+.custom-rom__name {
+  background: var(--bg-dark);
+  border: 1px solid rgba(var(--c-purple), 0.4);
+  color: var(--neon-purple);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  outline: none;
+}
+.custom-rom__name:focus {
+  border-color: var(--neon-purple);
+  box-shadow: var(--glow-purple);
+}
+.custom-rom__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+/* Los <input type="color"> nativos son feos por defecto. Los igualamos al tema. */
+.custom-rom__color {
+  width: 100%;
+  height: 36px;
+  border: 1px solid rgba(var(--c-purple), 0.4);
+  background: var(--bg-dark);
+  padding: 2px;
+  cursor: pointer;
+}
+.custom-rom__color:focus {
+  border-color: var(--neon-purple);
+  box-shadow: var(--glow-purple);
+  outline: none;
+}
+.custom-rom__preview {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.custom-rom__sw {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--bg-dark);
+}
+.custom-rom__actions {
+  display: flex;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(var(--c-purple), 0.3);
+  justify-content: flex-end;
+}
+.custom-rom__btn {
+  background: transparent;
+  border: 1px solid rgba(var(--c-purple), 0.4);
+  color: var(--neon-purple);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  padding: 8px 18px;
+  cursor: pointer;
+}
+.custom-rom__btn:hover { background: rgba(var(--c-purple), 0.15); }
+.custom-rom__btn--primary {
+  background: var(--neon-purple);
+  color: var(--bg-dark);
+  border-color: var(--neon-purple);
+}
+.custom-rom__btn--primary:hover {
+  filter: brightness(1.1);
+  box-shadow: var(--glow-purple);
+}
+
+/* Separador y add button en el menú ROM */
+.rom-option__separator {
+  height: 1px;
+  margin: 6px 8px;
+  background: rgba(var(--c-cyan), 0.25);
+  list-style: none;
+}
+.rom-option--add {
+  color: var(--neon-purple);
+  border-top: 1px dashed rgba(var(--c-purple), 0.4);
+  margin-top: 4px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.rom-option--add:hover {
+  background: rgba(var(--c-purple), 0.15);
+}
+.rom-option__delete {
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 14px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rom-option__delete:hover {
+  color: var(--neon-pink);
+  text-shadow: var(--glow-pink);
+}
+
 /* ===== MOVIMIENTO REDUCIDO =====
    Se apagan las dos animaciones que corren en bucle (el glitch del título y
    el pulso del anillo), decorativas y potencialmente molestas. Las de
@@ -1859,7 +2032,9 @@ input[type="range"]::-moz-range-thumb {
   .help,
   .help__panel,
   .stats-modal,
-  .stats-modal__panel {
+  .stats-modal__panel,
+  .custom-rom,
+  .custom-rom__panel {
     animation: none;
   }
 

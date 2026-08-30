@@ -237,6 +237,50 @@
     </div>
   </div>
 
+  <!-- Custom ROM creation modal -->
+  <div class="custom-rom" id="custom-rom" hidden>
+    <div class="custom-rom__panel" role="dialog" aria-labelledby="custom-rom-title">
+      <div class="custom-rom__header">
+        <h2 class="custom-rom__title" id="custom-rom-title">[ CUSTOM ROM ]</h2>
+        <button class="custom-rom__close" id="custom-rom-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+      <div class="custom-rom__body">
+        <label class="custom-rom__field">
+          <span class="custom-rom__label">NOMBRE</span>
+          <input type="text" id="custom-rom-name" class="custom-rom__name" maxlength="20" placeholder="MI-THEME" />
+        </label>
+        <div class="custom-rom__grid">
+          <label class="custom-rom__field">
+            <span class="custom-rom__label">PRIMARY</span>
+            <input type="color" id="custom-rom-primary" class="custom-rom__color" value="#00f5ff" />
+          </label>
+          <label class="custom-rom__field">
+            <span class="custom-rom__label">ACCENT</span>
+            <input type="color" id="custom-rom-accent" class="custom-rom__color" value="#ff2a6d" />
+          </label>
+          <label class="custom-rom__field">
+            <span class="custom-rom__label">TERTIARY</span>
+            <input type="color" id="custom-rom-tertiary" class="custom-rom__color" value="#b026ff" />
+          </label>
+          <label class="custom-rom__field">
+            <span class="custom-rom__label">HIGHLIGHT</span>
+            <input type="color" id="custom-rom-highlight" class="custom-rom__color" value="#f9f871" />
+          </label>
+        </div>
+        <div class="custom-rom__preview" id="custom-rom-preview">
+          <span class="custom-rom__sw" data-slot="primary"></span>
+          <span class="custom-rom__sw" data-slot="accent"></span>
+          <span class="custom-rom__sw" data-slot="tertiary"></span>
+          <span class="custom-rom__sw" data-slot="highlight"></span>
+        </div>
+      </div>
+      <div class="custom-rom__actions">
+        <button class="custom-rom__btn custom-rom__btn--primary" id="custom-rom-save" type="button">GUARDAR</button>
+        <button class="custom-rom__btn" id="custom-rom-cancel" type="button">CANCELAR</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Help modal (?) -->
   <div class="help" id="help" hidden>
     <div class="help__panel" role="dialog" aria-labelledby="help-title">
