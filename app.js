@@ -131,12 +131,15 @@ function loadTimer() {
     if (!raw) return defaultTimer();
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return defaultTimer();
+    const endAt = typeof parsed.endAt === "number" ? parsed.endAt : null;
     return {
       mode: ["focus", "short", "long"].includes(parsed.mode) ? parsed.mode : "focus",
       remaining: typeof parsed.remaining === "number" ? parsed.remaining : MODES.focus.duration,
       cycles: typeof parsed.cycles === "number" ? parsed.cycles : 0,
-      running: false,
-      endAt: null,
+      // Una sesión en curso sobrevive a la recarga: sólo se restaura como
+      // "running" si además hay una marca de fin con la que reconstruirla.
+      running: parsed.running === true && endAt !== null,
+      endAt,
     };
   } catch {
     return defaultTimer();
@@ -499,16 +502,29 @@ function renderActiveTask() {
   }
 }
 
+// Segundos que faltan según el reloj real, no según cuántas veces corrió tick().
+// Los navegadores estrangulan setInterval en pestañas ocultas, así que contar
+// ticks haría que una sesión de 25 min en segundo plano durase mucho más.
+// ceil (y no round) para que el último segundo se vea entero y la sesión
+// termine exactamente al cumplirse la duración, no medio segundo antes.
+function remainingFromClock() {
+  if (!timer.running || timer.endAt === null) return timer.remaining;
+  return Math.max(0, Math.ceil((timer.endAt - Date.now()) / 1000));
+}
+
 function start() {
   if (timer.running) return;
+  ensureAudio();
+  requestNotificationPermission();
   timer.running = true;
   timer.endAt = Date.now() + timer.remaining * 1000;
-  intervalId = setInterval(tick, 1000);
+  intervalId = setInterval(tick, 250);
   renderTimer();
 }
 
 function pause() {
   if (!timer.running) return;
+  timer.remaining = remainingFromClock();
   timer.running = false;
   timer.endAt = null;
   clearInterval(intervalId);
@@ -523,12 +539,16 @@ function reset() {
 }
 
 function tick() {
-  timer.remaining--;
-  if (timer.remaining <= 0) {
+  const next = remainingFromClock();
+  if (next <= 0) {
     timer.remaining = 0;
     pause();
     onComplete();
+    return;
   }
+  // Sin cambio de segundo no hay nada que repintar.
+  if (next === timer.remaining) return;
+  timer.remaining = next;
   renderTimer();
 }
 
@@ -539,12 +559,14 @@ function setMode(mode) {
   renderTimer();
 }
 
-function onComplete() {
+function onComplete({ silent = false } = {}) {
   const finishedMode = timer.mode;
   const finishedMinutes = Math.round(MODES[finishedMode].duration / 60);
 
-  beep();
-  flashTimer();
+  if (!silent) {
+    beep();
+    flashTimer();
+  }
 
   // Log session
   sessions.push({
@@ -566,7 +588,7 @@ function onComplete() {
     }
   }
 
-  if ("Notification" in window && Notification.permission === "granted") {
+  if (!silent && "Notification" in window && Notification.permission === "granted") {
     new Notification("Pomodoro", {
       body: `${MODES[finishedMode].label} terminado`,
       silent: false,
@@ -589,11 +611,25 @@ function flashTimer() {
   setTimeout(() => timerEl.classList.remove("timer--flash"), 1800);
 }
 
-function beep() {
+// El AudioContext se crea una sola vez, durante un gesto del usuario (START).
+// Creado más tarde —al completarse la sesión— nacería suspendido y el pitido
+// se perdería en silencio.
+let audioCtx = null;
+
+function ensureAudio() {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
-    const ctx = new Ctx();
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch {}
+}
+
+function beep() {
+  try {
+    if (!audioCtx) return;
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const ctx = audioCtx;
     const doBeep = (freq, start, dur) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -609,7 +645,6 @@ function beep() {
     };
     doBeep(880, 0, 0.15);
     doBeep(1320, 0.2, 0.3);
-    setTimeout(() => ctx.close(), 800);
   } catch {}
 }
 
@@ -773,6 +808,12 @@ settingsCancelBtn.addEventListener("click", closeSettings);
 
 logToggle.addEventListener("click", toggleLog);
 
+// Al volver a la pestaña el intervalo pudo haber estado estrangulado: se
+// recalcula de inmediato en vez de esperar al siguiente tick.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && timer.running) tick();
+});
+
 romCurrent.addEventListener("click", (e) => {
   e.stopPropagation();
   toggleRomMenu();
@@ -802,21 +843,42 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-if ("Notification" in window && Notification.permission === "default") {
-  Notification.requestPermission();
+// Se pide en el primer START, no al cargar: los navegadores penalizan (y Chrome
+// puede autobloquear) los permisos solicitados sin interacción previa.
+function requestNotificationPermission() {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission();
+  }
 }
 
 // ===== INIT =====
 applySettings();
 renderRomMenu();
 applyRom(currentRom);
-const maxRemaining = MODES[timer.mode].duration;
-if (!timer.running && timer.remaining > maxRemaining) {
-  timer.remaining = maxRemaining;
+
+if (timer.running) {
+  timer.remaining = remainingFromClock();
+} else if (timer.remaining > MODES[timer.mode].duration) {
+  // Los ajustes pudieron cambiar mientras el timer estaba parado.
+  timer.remaining = MODES[timer.mode].duration;
 }
+
 renderTimer();
 renderTasks();
 renderMissionLog();
 
 // Restaurar estado abierto/cerrado del log
 if (loadLogOpen()) openLog();
+
+// Retomar la sesión que quedó a medias al cerrar la página.
+if (timer.running) {
+  if (timer.remaining > 0) {
+    intervalId = setInterval(tick, 250);
+  } else {
+    // Venció mientras la página estaba cerrada. Se registra UNA sola sesión,
+    // por mucho tiempo que haya pasado, y sin pitido ni aviso tardíos.
+    timer.running = false;
+    timer.endAt = null;
+    onComplete({ silent: true });
+  }
+}
