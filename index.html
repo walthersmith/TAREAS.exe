@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Todo App</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app__header">
+      <h1 class="app__title">TAREAS.exe</h1>
+      <div class="app__header-row">
+        <p class="app__subtitle" id="counter">0 pendientes</p>
+        <div class="rom-picker" id="rom-picker">
+          <button class="rom-picker__current" id="rom-current" type="button" aria-haspopup="listbox" aria-expanded="false">
+            <span class="rom-picker__label">ROM</span>
+            <span class="rom-picker__name" id="rom-name">DEFAULT</span>
+            <span class="rom-picker__caret">▾</span>
+          </button>
+          <ul class="rom-picker__menu" id="rom-menu" role="listbox" hidden></ul>
+        </div>
+      </div>
+    </header>
+
+    <section class="timer" id="timer" aria-label="Pomodoro">
+      <button class="timer__cfg" id="settings-btn" type="button" aria-label="Configurar tiempos" title="Configurar">⚙</button>
+
+      <div class="timer__modes" role="tablist">
+        <button class="timer__mode timer__mode--active" data-mode="focus" type="button" role="tab">FOCUS</button>
+        <button class="timer__mode" data-mode="short" type="button" role="tab">BREAK</button>
+        <button class="timer__mode" data-mode="long" type="button" role="tab">LONG</button>
+      </div>
+
+      <div class="timer__settings" id="settings" hidden>
+        <div class="setting">
+          <label for="set-focus">FOCUS</label>
+          <input type="number" id="set-focus" min="1" max="999" step="1" />
+          <span class="setting__unit">min</span>
+        </div>
+        <div class="setting">
+          <label for="set-short">BREAK</label>
+          <input type="number" id="set-short" min="1" max="999" step="1" />
+          <span class="setting__unit">min</span>
+        </div>
+        <div class="setting">
+          <label for="set-long">LONG</label>
+          <input type="number" id="set-long" min="1" max="999" step="1" />
+          <span class="setting__unit">min</span>
+        </div>
+        <div class="setting__actions">
+          <button class="setting__btn setting__btn--primary" id="settings-save" type="button">SAVE</button>
+          <button class="setting__btn" id="settings-cancel" type="button">CANCEL</button>
+        </div>
+      </div>
+
+      <div class="timer__display">
+        <svg class="timer__ring" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="timer__ring-bg" cx="100" cy="100" r="88" />
+          <circle class="timer__ring-progress" id="ring" cx="100" cy="100" r="88" />
+        </svg>
+        <div class="timer__center">
+          <div class="timer__time" id="time">25:00</div>
+          <div class="timer__label" id="timer-label">FOCUS</div>
+        </div>
+      </div>
+
+      <div class="timer__controls">
+        <button class="timer__btn timer__btn--primary" id="toggle" type="button">START</button>
+        <button class="timer__btn" id="reset" type="button">RESET</button>
+      </div>
+
+      <div class="timer__meta">
+        <span class="timer__cycles" id="cycles">
+          <span class="dot dot--on"></span>
+          <span class="dot dot--on"></span>
+          <span class="dot dot--on"></span>
+          <span class="dot"></span>
+        </span>
+        <span class="timer__task" id="active-task">// no target</span>
+      </div>
+    </section>
+
+    <form class="form" id="form" autocomplete="off">
+      <input
+        class="form__input"
+        id="input"
+        type="text"
+        placeholder="> Nueva tarea..."
+        maxlength="200"
+        required
+      />
+      <button class="form__button" type="submit" aria-label="Añadir tarea">
+        +
+      </button>
+    </form>
+
+    <ul class="list" id="list"></ul>
+
+    <section class="log" id="log" data-open="false">
+      <button class="log__header" id="log-toggle" type="button" aria-expanded="false">
+        <span class="log__title">[ MISSION LOG ]</span>
+        <span class="log__caret" id="log-caret">▸</span>
+      </button>
+      <div class="log__body" id="log-body" hidden>
+        <dl class="log__stats">
+          <div class="stat">
+            <dt class="stat__label">TODAY</dt>
+            <dd class="stat__value"><span class="stat__num" id="log-today">0</span><span class="stat__unit">▮</span></dd>
+            <dd class="stat__sub" id="log-today-min">0m</dd>
+          </div>
+          <div class="stat">
+            <dt class="stat__label">STREAK</dt>
+            <dd class="stat__value"><span class="stat__num" id="log-streak">0</span><span class="stat__unit">▲</span></dd>
+            <dd class="stat__sub">days</dd>
+          </div>
+          <div class="stat">
+            <dt class="stat__label">TOTAL</dt>
+            <dd class="stat__value"><span class="stat__num" id="log-total">0</span><span class="stat__unit">▮</span></dd>
+            <dd class="stat__sub" id="log-total-min">0m</dd>
+          </div>
+          <div class="stat">
+            <dt class="stat__label">BEST</dt>
+            <dd class="stat__value"><span class="stat__num" id="log-best">0</span><span class="stat__unit">▮</span></dd>
+            <dd class="stat__sub" id="log-best-date">—</dd>
+          </div>
+        </dl>
+
+        <div class="chart">
+          <div class="chart__title">// LAST 7 DAYS</div>
+          <div class="chart__body" id="log-chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="app__footer">
+      <button class="footer__button" id="clear-completed" type="button">
+        Limpiar completadas
+      </button>
+    </footer>
+
+    <p class="empty" id="empty">No hay tareas. ¡Añade una!</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
