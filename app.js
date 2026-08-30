@@ -5,9 +5,11 @@ const SETTINGS_KEY = "todo-app:settings";
 const SESSIONS_KEY = "todo-app:sessions";
 const LOG_KEY = "todo-app:log-open";
 const ROM_KEY = "todo-app:rom";
+const SOUND_KEY = "todo-app:sound";
 const RING_CIRCUMFERENCE = 2 * Math.PI * 88;
 
 const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4 };
+const DEFAULT_SOUND = { enabled: true, volume: 0.5, customFile: null }; // customFile: {name, dataUrl, mime, size} | null
 const MAX_CYCLES = 12;
 const POMO_VISIBLE_MAX = 5;
 
@@ -93,6 +95,14 @@ const setLongInput = document.getElementById("set-long");
 const setCyclesInput = document.getElementById("set-cycles");
 const settingsSaveBtn = document.getElementById("settings-save");
 const settingsCancelBtn = document.getElementById("settings-cancel");
+
+const setSoundToggle = document.getElementById("set-sound");
+const setVolumeInput = document.getElementById("set-volume");
+const setVolumeVal = document.getElementById("set-volume-val");
+const setSoundPickBtn = document.getElementById("set-sound-pick");
+const setSoundClearBtn = document.getElementById("set-sound-clear");
+const setSoundNameEl = document.getElementById("set-sound-name");
+const setSoundFile = document.getElementById("set-sound-file");
 
 const logEl = document.getElementById("log");
 const logToggle = document.getElementById("log-toggle");
@@ -232,13 +242,26 @@ function openSettings() {
   setShortInput.value = settings.short;
   setLongInput.value  = settings.long;
   setCyclesInput.value = settings.cycles;
+  // Reflejar las preferencias de sonido en los controles al abrir.
+  updateSoundToggleUI();
+  updateVolumeUI();
+  updateSoundFileUI();
   setFocusInput.focus();
   setFocusInput.select();
+  playSound("settingsOpen");
 }
 
-function closeSettings() {
+// reason: "close" (escape, click fuera) | "save" (commit) | "cancel" (botón CANCEL)
+function closeSettings(reason = "close") {
   cfgBtn.classList.remove("timer__cfg--active");
   settingsPanel.hidden = true;
+  if (reason === "save") {
+    playSound("settingsSave");
+  } else if (reason === "cancel") {
+    playSound("settingsCancel");
+  } else {
+    playSound("settingsClose");
+  }
 }
 
 function commitSettings() {
@@ -253,7 +276,7 @@ function commitSettings() {
     cycles: clamp(setCyclesInput, settings.cycles, MAX_CYCLES),
   };
   saveSettings();
-  closeSettings();
+  closeSettings("save");
 }
 
 // ===== ROM (theme) =====
@@ -286,6 +309,7 @@ function applyRom(romKey) {
   romMenu.querySelectorAll(".rom-option").forEach((opt) => {
     opt.classList.toggle("rom-option--active", opt.dataset.rom === romKey);
   });
+  playSound("romSwitch", romKey);
 }
 
 function renderRomMenu() {
@@ -449,12 +473,12 @@ function buildEditInput(task) {
   const commit = () => {
     if (settled) return;
     settled = true;
-    finishEditing(input.value);
+    finishEditing(input.value, "save");
   };
   const cancel = () => {
     if (settled) return;
     settled = true;
-    finishEditing(null);
+    finishEditing(null, "cancel");
   };
 
   input.addEventListener("keydown", (e) => {
@@ -480,7 +504,7 @@ function startEditing(id) {
 
 // newText === null cancela. Un texto vacío también se descarta: borrar una
 // tarea es cosa del botón ×, no un efecto lateral de vaciar el campo.
-function finishEditing(newText) {
+function finishEditing(newText, kind) {
   const task = tasks.find((t) => t.id === editingTaskId);
   editingTaskId = null;
   if (task && newText !== null) {
@@ -492,6 +516,7 @@ function finishEditing(newText) {
   }
   renderTasks();
   renderActiveTask();
+  playSound(kind === "save" ? "editSave" : "editCancel");
 }
 
 function addTask(text) {
@@ -500,6 +525,7 @@ function addTask(text) {
   tasks.push({ id: uid(), text: trimmed, done: false, pomodoros: 0 });
   saveTasks();
   renderTasks();
+  playSound("add");
 }
 
 function toggle(id) {
@@ -509,6 +535,7 @@ function toggle(id) {
   if (task.done && activeTaskId === id) activeTaskId = null;
   saveTasks();
   renderTasks();
+  playSound("complete");
 }
 
 function removeTask(id) {
@@ -516,12 +543,14 @@ function removeTask(id) {
   tasks = tasks.filter((t) => t.id !== id);
   saveTasks();
   renderTasks();
+  playSound("delete");
 }
 
 function clearCompleted() {
   tasks = tasks.filter((t) => !t.done);
   saveTasks();
   renderTasks();
+  playSound("deleteBulk");
 }
 
 function setActiveTask(id) {
@@ -532,6 +561,7 @@ function setActiveTask(id) {
     activeTaskId = activeTaskId === id ? null : id;
   }
   renderTasks();
+  playSound("targetLock");
 }
 
 function flashPomodoroCell(taskId) {
@@ -641,6 +671,7 @@ function start() {
   timer.endAt = Date.now() + timer.remaining * 1000;
   intervalId = setInterval(tick, 250);
   renderTimer();
+  playSound("timerStart");
 }
 
 function pause() {
@@ -651,12 +682,14 @@ function pause() {
   clearInterval(intervalId);
   intervalId = null;
   renderTimer();
+  playSound("timerPause");
 }
 
 function reset() {
   pause();
   timer.remaining = MODES[timer.mode].duration;
   renderTimer();
+  playSound("timerReset");
 }
 
 function tick() {
@@ -678,6 +711,8 @@ function setMode(mode) {
   timer.mode = mode;
   timer.remaining = MODES[mode].duration;
   renderTimer();
+  const soundKey = mode === "focus" ? "modeFocus" : mode === "short" ? "modeShort" : "modeLong";
+  playSound(soundKey);
 }
 
 function onComplete({ silent = false } = {}) {
@@ -685,7 +720,7 @@ function onComplete({ silent = false } = {}) {
   const finishedMinutes = Math.round(MODES[finishedMode].duration / 60);
 
   if (!silent) {
-    beep();
+    playSound("sessionComplete", finishedMode);
     flashTimer();
     announce(`${MODES[finishedMode].label} terminado.`);
   }
@@ -759,27 +794,597 @@ function ensureAudio() {
   } catch {}
 }
 
-function beep() {
+// ===== AUDIO =====
+// Sonidos sintetizados con WebAudio: nada de archivos para el feedback de UI.
+// Cada ROM define su propio "kit" (timbre + frecuencias + fanfarria + acorde firma).
+// El sonido de sesión completada puede reemplazarse con un archivo del usuario
+// (<50 KB, base64 en localStorage) que se sube desde el panel de Settings.
+
+// --- Estado ---
+function loadSoundPrefs() {
   try {
-    if (!audioCtx) return;
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    const ctx = audioCtx;
-    const doBeep = (freq, start, dur) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = "square";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, ctx.currentTime + start);
-      gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + start + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
-      osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + dur);
+    const raw = localStorage.getItem(SOUND_KEY);
+    if (!raw) return { ...DEFAULT_SOUND };
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_SOUND.enabled,
+      volume: Number.isFinite(parsed.volume) ? Math.min(1, Math.max(0, parsed.volume)) : DEFAULT_SOUND.volume,
+      customFile:
+        parsed.customFile &&
+        typeof parsed.customFile === "object" &&
+        typeof parsed.customFile.dataUrl === "string" &&
+        typeof parsed.customFile.name === "string"
+          ? {
+              name: parsed.customFile.name,
+              dataUrl: parsed.customFile.dataUrl,
+              mime: typeof parsed.customFile.mime === "string" ? parsed.customFile.mime : "audio/*",
+              size: Number.isFinite(parsed.customFile.size) ? parsed.customFile.size : 0,
+            }
+          : null,
     };
-    doBeep(880, 0, 0.15);
-    doBeep(1320, 0.2, 0.3);
+  } catch {
+    return { ...DEFAULT_SOUND };
+  }
+}
+
+function saveSoundPrefs() {
+  try {
+    localStorage.setItem(SOUND_KEY, JSON.stringify(soundPrefs));
   } catch {}
+}
+
+let soundPrefs = loadSoundPrefs();
+let customAudioBuffer = null;
+
+// matchMedia puede no existir en algunos navegadores viejos; defenderse.
+let reducedMotion = (() => {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+})();
+try {
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  mq.addEventListener?.("change", (e) => { reducedMotion = e.matches; });
+} catch {}
+
+// --- Helpers ---
+function ctxOrNull() {
+  // El AudioContext sólo se crea en gesto del usuario (en start()).
+  // Si no existe aún, los sonidos UI quedan en silencio — coherente con
+  // cómo se pide el permiso de Notification en el primer START.
+  if (!audioCtx) return null;
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  return audioCtx.state === "running" ? audioCtx : null;
+}
+
+// Sonidos no esenciales: se silencian con prefers-reduced-motion.
+// sessionComplete sigue sonando porque es señal crítica de fin de sesión.
+const NON_ESSENTIAL = new Set([
+  "hover", "click", "add", "delete", "deleteBulk", "complete",
+  "editSave", "editCancel", "modeFocus", "modeShort", "modeLong",
+  "timerStart", "timerPause", "timerReset",
+  "settingsOpen", "settingsClose", "settingsSave", "settingsCancel",
+  "export", "import", "romSwitch", "targetLock",
+]);
+function skipForMotion(kind) {
+  return reducedMotion && NON_ESSENTIAL.has(kind);
+}
+
+// --- Primitiva de oscilador ---
+// Programa una nota con envelope ADSR mínimo (attack lineal + decay exponencial).
+function tone({ freq, dur, type, gain, attack, decay, start = 0, detune = 0, filter }) {
+  const ctx = ctxOrNull();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    if (detune) osc.detune.value = detune;
+    osc.connect(g);
+
+    let last = g;
+    if (filter) {
+      const f = ctx.createBiquadFilter();
+      f.type = filter.type || "lowpass";
+      f.frequency.value = filter.freq || 1200;
+      g.connect(f);
+      last = f;
+    }
+    last.connect(ctx.destination);
+
+    const t0 = ctx.currentTime + start;
+    const a = attack ?? 0.005;
+    const d = decay ?? Math.max(0.05, dur * 0.6);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + a);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d);
+
+    osc.start(t0);
+    osc.stop(t0 + a + d + 0.05);
+  } catch {}
+}
+
+// Programa varias notas. Si stagger > 0 se arpeggian; si no, suenan a la vez.
+function chord(notes, { stagger = 0 } = {}) {
+  notes.forEach((n, i) => tone({ ...n, start: (n.start || 0) + i * stagger }));
+}
+
+// --- Kits de audio por ROM ---
+// Cada uno define el carácter sonoro del tema. La fanfare se usa al completar
+// sesión; el signatureChord (4 notas, una por slot de color) al cambiar ROM.
+const ROM_AUDIO = {
+  default: {
+    wave: "square",
+    baseFreqs: { focus: 196, short: 440, long: 262 }, // G3 / A4 / C4
+    envelope: { attack: 0.005, decay: 0.10 },
+    hover: { freq: 1200, dur: 0.025, gain: 0.018 },
+    click: { freq: 900,  dur: 0.04,  gain: 0.07 },
+    fanfare: [
+      { freq: 523.25, dur: 0.12, gain: 0.10 }, // C5
+      { freq: 659.25, dur: 0.12, gain: 0.10 }, // E5
+      { freq: 783.99, dur: 0.12, gain: 0.10 }, // G5
+      { freq: 1046.5, dur: 0.32, gain: 0.13 }, // C6 sostenido
+    ],
+    fanfareBreak: [
+      { freq: 880,  dur: 0.10, gain: 0.10 },
+      { freq: 1318, dur: 0.30, gain: 0.12 }, // E6
+    ],
+    signatureChord: [
+      { freq: 523.25, dur: 0.18, gain: 0.06 }, // primary
+      { freq: 659.25, dur: 0.18, gain: 0.06 }, // accent
+      { freq: 783.99, dur: 0.18, gain: 0.06 }, // tertiary
+      { freq: 1046.5, dur: 0.24, gain: 0.07 }, // highlight
+    ],
+  },
+  blade: {
+    wave: "sawtooth",
+    baseFreqs: { focus: 174, short: 415, long: 233 }, // F3 / G#4 / A#3
+    envelope: { attack: 0.012, decay: 0.14 },
+    hover: { freq: 660, dur: 0.035, gain: 0.02 },
+    click: { freq: 330, dur: 0.05,  gain: 0.08 },
+    fanfare: [
+      { freq: 349.23, dur: 0.14, gain: 0.10 }, // F4
+      { freq: 415.30, dur: 0.14, gain: 0.10 }, // G#4
+      { freq: 523.25, dur: 0.14, gain: 0.10 }, // C5
+      { freq: 698.46, dur: 0.40, gain: 0.13 }, // F5 sostenido
+    ],
+    fanfareBreak: [
+      { freq: 698.46, dur: 0.10, gain: 0.10 },
+      { freq: 830.61, dur: 0.30, gain: 0.12 }, // G#5
+    ],
+    signatureChord: [
+      { freq: 349.23, dur: 0.20, gain: 0.06 },
+      { freq: 466.16, dur: 0.20, gain: 0.06 }, // A#4
+      { freq: 523.25, dur: 0.20, gain: 0.06 },
+      { freq: 698.46, dur: 0.26, gain: 0.07 },
+    ],
+  },
+  matrix: {
+    wave: "sine",
+    baseFreqs: { focus: 220, short: 587, long: 277 }, // A3 / D5 / C#4
+    envelope: { attack: 0.003, decay: 0.08 },
+    hover: { freq: 1800, dur: 0.02,  gain: 0.015 },
+    click: { freq: 1100, dur: 0.045, gain: 0.06 },
+    fanfare: [
+      { freq: 440, dur: 0.10, gain: 0.10 }, // A4
+      { freq: 554, dur: 0.10, gain: 0.10 }, // C#5
+      { freq: 659, dur: 0.10, gain: 0.10 }, // E5
+      { freq: 880, dur: 0.30, gain: 0.13 }, // A5 sostenido
+    ],
+    fanfareBreak: [
+      { freq: 1175, dur: 0.08, gain: 0.10 },
+      { freq: 1568, dur: 0.30, gain: 0.12 }, // G6
+    ],
+    signatureChord: [
+      { freq: 440, dur: 0.18, gain: 0.06 },
+      { freq: 554, dur: 0.18, gain: 0.06 },
+      { freq: 659, dur: 0.18, gain: 0.06 },
+      { freq: 880, dur: 0.24, gain: 0.07 },
+    ],
+  },
+  cdproject: {
+    wave: "triangle",
+    baseFreqs: { focus: 247, short: 494, long: 294 }, // B3 / B4 / D4
+    envelope: { attack: 0.004, decay: 0.09 },
+    hover: { freq: 1300, dur: 0.025, gain: 0.018 },
+    click: { freq: 1000, dur: 0.045, gain: 0.07 },
+    fanfare: [
+      { freq: 494, dur: 0.12, gain: 0.10 }, // B4
+      { freq: 587, dur: 0.12, gain: 0.10 }, // D5
+      { freq: 740, dur: 0.12, gain: 0.10 }, // F#5
+      { freq: 988, dur: 0.32, gain: 0.13 }, // B5 sostenido
+    ],
+    fanfareBreak: [
+      { freq: 988,  dur: 0.10, gain: 0.10 },
+      { freq: 1175, dur: 0.30, gain: 0.12 }, // D6
+    ],
+    signatureChord: [
+      { freq: 494, dur: 0.18, gain: 0.06 },
+      { freq: 659, dur: 0.18, gain: 0.06 }, // E5
+      { freq: 740, dur: 0.18, gain: 0.06 },
+      { freq: 988, dur: 0.24, gain: 0.07 },
+    ],
+  },
+  akira: {
+    wave: "square",
+    baseFreqs: { focus: 165, short: 523, long: 247 }, // E3 / C5 / B3
+    envelope: { attack: 0.003, decay: 0.06 },
+    hover: { freq: 1500, dur: 0.02,  gain: 0.018 },
+    click: { freq: 990,  dur: 0.04,  gain: 0.08 },
+    fanfare: [
+      { freq: 392,  dur: 0.06, gain: 0.09 }, // G4
+      { freq: 523,  dur: 0.06, gain: 0.09 }, // C5
+      { freq: 659,  dur: 0.06, gain: 0.09 }, // E5
+      { freq: 880,  dur: 0.06, gain: 0.09 }, // A5
+      { freq: 1046, dur: 0.32, gain: 0.13 }, // C6 sostenido
+    ],
+    fanfareBreak: [
+      { freq: 1046, dur: 0.08, gain: 0.10 },
+      { freq: 1568, dur: 0.30, gain: 0.12 }, // G6
+    ],
+    signatureChord: [
+      { freq: 392, dur: 0.16, gain: 0.06 },
+      { freq: 523, dur: 0.16, gain: 0.06 },
+      { freq: 659, dur: 0.16, gain: 0.06 },
+      { freq: 880, dur: 0.22, gain: 0.07 },
+    ],
+  },
+};
+
+// --- Catálogo de sonidos ---
+// Cada función construye los parámetros usando el kit del ROM activo.
+// Todas las ganancias son pre-multiplicador; playSound() aplica volume.
+
+function buildKitSound(kitKey) {
+  return (extra = {}) => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const base = kit[kitKey];
+    if (!base) return;
+    tone({
+      ...base,
+      type: extra.type || kit.wave,
+      attack: kit.envelope.attack,
+      decay: kit.envelope.decay,
+      gain: (base.gain || 0.05) * soundPrefs.volume,
+      ...extra,
+      filter: kit.wave === "sawtooth" ? { freq: 1200, type: "lowpass" } : undefined,
+    });
+  };
+}
+
+const SOUNDS = {
+  hover:  buildKitSound("hover"),
+  click:  buildKitSound("click"),
+
+  add: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const base = kit.baseFreqs.short;
+    chord([
+      { freq: base * 1.5, dur: 0.08, gain: 0.08 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+      { freq: base * 2.0, dur: 0.09, gain: 0.07 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+    ]);
+  },
+
+  delete: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const base = kit.baseFreqs.short;
+    chord([
+      { freq: base * 2.0, dur: 0.08, gain: 0.07 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+      { freq: base * 1.5, dur: 0.09, gain: 0.06 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+    ]);
+  },
+
+  deleteBulk: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    [1000, 800, 600, 400].forEach((f, i) => {
+      tone({ freq: f, dur: 0.08, gain: 0.06 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay, start: i * 0.05 });
+    });
+  },
+
+  complete: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const base = kit.baseFreqs.short;
+    chord([
+      { freq: base * 2.0, dur: 0.10, gain: 0.08 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+      { freq: base * 2.4, dur: 0.10, gain: 0.08 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+    ]);
+  },
+
+  editSave: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    chord([
+      { freq: 740, dur: 0.08, gain: 0.07 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+      { freq: 988, dur: 0.08, gain: 0.07 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay },
+    ]);
+  },
+
+  editCancel: () => {
+    tone({ freq: 220, dur: 0.05, gain: 0.04 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.04 });
+    tone({ freq: 196, dur: 0.05, gain: 0.035 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.04, start: 0.04 });
+  },
+
+  modeFocus: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    tone({ freq: kit.baseFreqs.focus, dur: 0.18, gain: 0.09 * soundPrefs.volume, type: kit.wave, attack: kit.envelope.attack, decay: 0.18 });
+  },
+
+  modeShort: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    tone({ freq: kit.baseFreqs.short * 2, dur: 0.12, gain: 0.08 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.12 });
+  },
+
+  modeLong: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const ctx = ctxOrNull();
+    if (!ctx) return;
+    try {
+      // Tono medio con eco vía DelayNode reutilizable.
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = kit.wave;
+      osc.frequency.value = 392;
+      g.gain.setValueAtTime(0, ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.08 * soundPrefs.volume, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+      osc.connect(g);
+      const delay = ctx.createDelay();
+      delay.delayTime.value = 0.12;
+      g.connect(delay);
+      const dg = ctx.createGain();
+      dg.gain.value = 0.6;
+      delay.connect(dg);
+      dg.connect(ctx.destination);
+      g.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.3);
+    } catch {}
+  },
+
+  timerStart: () => {
+    chord([
+      { freq: 660, dur: 0.07, gain: 0.07 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.07 },
+      { freq: 880, dur: 0.07, gain: 0.07 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.07, start: 0.05 },
+    ]);
+  },
+
+  timerPause: () => {
+    chord([
+      { freq: 880, dur: 0.07, gain: 0.07 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.07 },
+      { freq: 660, dur: 0.07, gain: 0.07 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.07, start: 0.05 },
+    ]);
+  },
+
+  timerReset: () => {
+    tone({ freq: 440, dur: 0.08, gain: 0.05 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.08 });
+  },
+
+  settingsOpen: () => {
+    chord(
+      [
+        { freq: 523, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+        { freq: 659, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+        { freq: 784, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+      ],
+      { stagger: 0.05 }
+    );
+  },
+
+  settingsClose: () => {
+    chord(
+      [
+        { freq: 784, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+        { freq: 659, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+        { freq: 523, dur: 0.10, gain: 0.06 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.10 },
+      ],
+      { stagger: 0.05 }
+    );
+  },
+
+  settingsSave: () => {
+    // Bloque mayor simultáneo: C+E+G a la vez.
+    chord([
+      { freq: 523, dur: 0.18, gain: 0.05 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.18 },
+      { freq: 659, dur: 0.18, gain: 0.05 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.18 },
+      { freq: 784, dur: 0.18, gain: 0.05 * soundPrefs.volume, type: "triangle", attack: 0.003, decay: 0.18 },
+    ]);
+  },
+
+  settingsCancel: () => {
+    tone({ freq: 180, dur: 0.06, gain: 0.035 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.06 });
+  },
+
+  export: () => {
+    const ctx = ctxOrNull();
+    if (!ctx) return;
+    try {
+      // Sweep 300→1200 Hz + blip final a 1500 Hz.
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(300, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 0.25);
+      g.gain.setValueAtTime(0, ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.06 * soundPrefs.volume, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.30);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.32);
+      tone({ freq: 1500, dur: 0.08, gain: 0.07 * soundPrefs.volume, type: "square", attack: 0.003, decay: 0.08, start: 0.25 });
+    } catch {}
+  },
+
+  import: () => {
+    [800, 600, 500, 400].forEach((f, i) => {
+      tone({ freq: f, dur: 0.08, gain: 0.06 * soundPrefs.volume, type: "sine", attack: 0.003, decay: 0.08, start: i * 0.08 });
+    });
+  },
+
+  romSwitch: (romKey) => {
+    const kit = ROM_AUDIO[romKey] || ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    chord(
+      kit.signatureChord.map((n) => ({ ...n, gain: n.gain * soundPrefs.volume })),
+      { stagger: 0.06 }
+    );
+  },
+
+  sessionComplete: (finishedMode) => {
+    // Si hay archivo custom, decodificar perezosamente y reproducir.
+    if (soundPrefs.customFile && soundPrefs.customFile.dataUrl) {
+      playCustomFile().then((played) => {
+        if (played) return;
+        // Fallback a fanfarria sintetizada si falla la decodificación.
+        playFanfare(finishedMode);
+      });
+      return;
+    }
+    playFanfare(finishedMode);
+  },
+
+  targetLock: () => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    const ctx = ctxOrNull();
+    if (!ctx) return;
+    try {
+      const lo = kit.baseFreqs.short * 0.7;
+      const hi = kit.baseFreqs.short * 1.6;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(lo, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(hi, ctx.currentTime + 0.10);
+      g.gain.setValueAtTime(0, ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.05 * soundPrefs.volume, ctx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.15);
+      tone({ freq: 600, dur: 0.04, gain: 0.08 * soundPrefs.volume, type: "square", attack: 0.002, decay: 0.04, start: 0.10 });
+    } catch {}
+  },
+};
+
+function playFanfare(finishedMode) {
+  const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+  const notes = finishedMode === "focus" ? kit.fanfare : kit.fanfareBreak;
+  chord(
+    notes.map((n) => ({ ...n, gain: n.gain * soundPrefs.volume, type: n.type || kit.wave, attack: kit.envelope.attack, decay: kit.envelope.decay })),
+    { stagger: 0.05 }
+  );
+}
+
+// --- Dispatcher ---
+function playSound(kind, ...args) {
+  if (!soundPrefs.enabled) return;
+  if (skipForMotion(kind)) return;
+  const fn = SOUNDS[kind];
+  if (!fn) return;
+  try {
+    fn(...args);
+  } catch {}
+}
+
+// --- Archivo custom de notificación ---
+// Se almacena como base64 en localStorage y se decodifica perezosamente al primer uso.
+async function pickSoundFile(file) {
+  if (!file) return;
+  if (file.size > 50_000) {
+    alert("El archivo es demasiado grande (50 KB máx.).");
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+  soundPrefs.customFile = {
+    name: file.name,
+    dataUrl,
+    mime: file.type || "audio/*",
+    size: file.size,
+  };
+  customAudioBuffer = null;
+  saveSoundPrefs();
+  updateSoundFileUI();
+}
+
+async function decodeCustomFile() {
+  if (!soundPrefs.customFile || !soundPrefs.customFile.dataUrl) return null;
+  const ctx = ctxOrNull() || (() => {
+    // Si el audioCtx aún no existe (no se ha pulsado START), crearlo aquí
+    // rompe la política de autoplay. Devolver null y dejar que playCustomFile
+    // intente más tarde, en un gesto.
+    return null;
+  })();
+  if (!ctx) return null;
+  try {
+    const res = await fetch(soundPrefs.customFile.dataUrl);
+    const arr = await res.arrayBuffer();
+    const buf = await ctx.decodeAudioData(arr);
+    customAudioBuffer = buf;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+async function playCustomFile() {
+  const buf = customAudioBuffer || (await decodeCustomFile());
+  if (!buf) return false;
+  const ctx = ctxOrNull();
+  if (!ctx) return false;
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = soundPrefs.volume;
+    src.connect(g);
+    g.connect(ctx.destination);
+    src.start(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearCustomFile() {
+  soundPrefs.customFile = null;
+  customAudioBuffer = null;
+  saveSoundPrefs();
+  updateSoundFileUI();
+}
+
+function updateSoundFileUI() {
+  if (!setSoundFile || !setSoundClearBtn || !setSoundNameEl) return;
+  if (soundPrefs.customFile) {
+    setSoundFile.dataset.hasFile = "true";
+    setSoundClearBtn.hidden = false;
+    setSoundNameEl.textContent = soundPrefs.customFile.name || "custom";
+  } else {
+    setSoundFile.dataset.hasFile = "false";
+    setSoundClearBtn.hidden = true;
+    setSoundNameEl.textContent = "synth";
+  }
+}
+
+function updateSoundToggleUI() {
+  if (!setSoundToggle) return;
+  setSoundToggle.setAttribute("aria-pressed", soundPrefs.enabled ? "true" : "false");
+  setSoundToggle.textContent = soundPrefs.enabled ? "SOUND ON" : "SOUND OFF";
+}
+
+function updateVolumeUI() {
+  if (!setVolumeInput || !setVolumeVal) return;
+  const pct = Math.round(soundPrefs.volume * 100);
+  setVolumeInput.value = String(pct);
+  setVolumeVal.textContent = `${pct}%`;
 }
 
 // ===== MISSION LOG =====
@@ -961,7 +1566,7 @@ function toggleLog() {
 // ===== EXPORTAR / IMPORTAR =====
 // Todo el estado vive en localStorage: sin una copia, limpiar los datos del
 // navegador borra el historial sin vuelta atrás.
-const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY];
+const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY];
 
 function exportData() {
   const data = {};
@@ -986,6 +1591,7 @@ function exportData() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  playSound("export");
 }
 
 // Se valida la forma entera ANTES de tocar nada: un archivo corrupto no debe
@@ -1037,6 +1643,7 @@ function importData(raw) {
     return;
   }
 
+  playSound("import");
   pause();
   DATA_KEYS.forEach((k) => localStorage.removeItem(k));
   entries.forEach(([k, v]) => localStorage.setItem(k, v));
@@ -1082,18 +1689,56 @@ modeBtns.forEach((b) => {
 
 cfgBtn.addEventListener("click", () => {
   if (settingsPanel.hidden) openSettings();
-  else closeSettings();
+  else closeSettings("close");
 });
 
 settingsSaveBtn.addEventListener("click", commitSettings);
-settingsCancelBtn.addEventListener("click", closeSettings);
+settingsCancelBtn.addEventListener("click", () => closeSettings("cancel"));
 
 [setFocusInput, setShortInput, setLongInput, setCyclesInput].forEach((input) => {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") commitSettings();
-    if (e.key === "Escape") closeSettings();
+    if (e.key === "Escape") closeSettings("cancel");
   });
 });
+
+// --- Preferencias de sonido ---
+setSoundToggle.addEventListener("click", () => {
+  soundPrefs.enabled = !soundPrefs.enabled;
+  saveSoundPrefs();
+  updateSoundToggleUI();
+});
+
+let volumePreviewTimer = 0;
+setVolumeInput.addEventListener("input", () => {
+  soundPrefs.volume = Number(setVolumeInput.value) / 100;
+  saveSoundPrefs();
+  updateVolumeUI();
+  // Preview blip con throttle para no martillear al arrastrar.
+  clearTimeout(volumePreviewTimer);
+  volumePreviewTimer = setTimeout(() => {
+    const kit = ROM_AUDIO[currentRom] || ROM_AUDIO.default;
+    tone({
+      freq: kit.click.freq,
+      dur: 0.04,
+      gain: kit.click.gain * soundPrefs.volume,
+      type: kit.wave,
+      attack: kit.envelope.attack,
+      decay: kit.envelope.decay,
+    });
+  }, 80);
+});
+
+setSoundPickBtn.addEventListener("click", () => setSoundFile.click());
+
+setSoundFile.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) pickSoundFile(file);
+  // Permite re-subir el mismo archivo después de quitarlo.
+  setSoundFile.value = "";
+});
+
+setSoundClearBtn.addEventListener("click", () => clearCustomFile());
 
 logToggle.addEventListener("click", toggleLog);
 
@@ -1115,10 +1760,25 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Hover delegado con throttle. Un solo listener cubre todos los botones
+// (WeakMap evita leak: renderTasks() recrea los .item, las claves se GC solas).
+const HOVERABLE = "button, .rom-option, .timer__mode, .item";
+const HOVER_THROTTLE_MS = 80;
+const lastHover = new WeakMap();
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest && e.target.closest(HOVERABLE);
+  if (!el) return;
+  if (el.matches && el.matches("button[disabled], [aria-disabled='true']")) return;
+  const now = performance.now();
+  if (now - (lastHover.get(el) || 0) < HOVER_THROTTLE_MS) return;
+  lastHover.set(el, now);
+  playSound("hover");
+});
+
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!romMenu.hidden) { closeRomMenu(); return; }
-    if (!settingsPanel.hidden) { closeSettings(); return; }
+    if (!settingsPanel.hidden) { closeSettings("close"); return; }
   }
   if (e.target.tagName === "INPUT") return;
   if (e.code === "Space") {
@@ -1158,6 +1818,9 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 applySettings();
 renderRomMenu();
 applyRom(currentRom);
+updateSoundToggleUI();
+updateVolumeUI();
+updateSoundFileUI();
 
 if (timer.running) {
   timer.remaining = remainingFromClock();
