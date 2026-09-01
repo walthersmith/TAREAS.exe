@@ -916,6 +916,32 @@ body::after {
   min-height: 200px;
 }
 
+/* En móvil el PiP fijo tapaba la lista de tareas. Con el panel cerrado el
+   video vuelve al flujo, debajo de TAREAS.exe (YouTube sigue ≥200×200). */
+@media (max-width: 899px) {
+  .lofi-bar[data-layout="dock"][data-open="false"]:has(.lofi-bar__video:not([hidden])) {
+    position: relative;
+    width: min(100%, 520px);
+    max-width: 520px;
+    flex: 1 1 100%;
+    height: auto;
+    overflow: visible;
+    pointer-events: auto;
+    padding: 0;
+    border: 1px solid rgba(var(--c-cyan), 0.35);
+    background: #000;
+  }
+  .lofi-bar[data-layout="dock"][data-open="false"] .lofi-bar__video:not([hidden]) {
+    position: static;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    min-width: 0;
+    z-index: 1;
+    box-shadow: none;
+  }
+}
+
 /* Móvil / ventana estrecha: cajón a la derecha, no encima del timer. */
 .lofi-bar[data-layout="compact"] {
   position: fixed;
