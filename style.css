@@ -568,6 +568,301 @@ body::after {
   box-shadow: var(--glow-pink);
 }
 
+/* ---------- LOFI BAR ---------- */
+/* La barra del reproductor vive entre el timer y el formulario: muestra el
+   canal actual y un play/pause rápido. El ♪ abre el popover con el resto de
+   los controles. position:relative para anclar el popover. */
+.lofi-bar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--c-cyan), 0.2);
+  background: rgba(var(--c-cyan), 0.02);
+  transition: border-color 0.2s, background 0.2s;
+}
+.lofi-bar:hover {
+  border-color: rgba(var(--c-cyan), 0.35);
+}
+
+.lofi-bar__btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(var(--c-cyan), 0.4);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.lofi-bar__btn:hover {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+/* aria-expanded indica popover abierto; aria-pressed indica que está sonando */
+.lofi-bar__btn[aria-expanded="true"] {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+.lofi-bar__btn[aria-pressed="true"]:not([aria-expanded="true"]) {
+  color: var(--neon-pink);
+  border-color: var(--neon-pink);
+  box-shadow: var(--glow-pink);
+}
+
+.lofi-bar__info {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.lofi-bar__label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+  text-shadow: var(--glow-cyan);
+  flex-shrink: 0;
+}
+.lofi-bar__channel {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.5px;
+  min-width: 0;
+}
+
+.lofi-bar__play {
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(var(--c-cyan), 0.4);
+  background: transparent;
+  color: var(--neon-cyan);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.lofi-bar__play:hover {
+  background: rgba(var(--c-cyan), 0.1);
+  box-shadow: var(--glow-cyan);
+}
+.lofi-bar__play[aria-pressed="true"] {
+  background: var(--neon-cyan);
+  color: var(--bg-dark);
+}
+
+/* ---------- LOFI POPOVER ---------- */
+.lofi-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  background: var(--card-bg);
+  border: 1px solid rgba(var(--c-cyan), 0.4);
+  box-shadow: var(--glow-cyan);
+  padding: 10px;
+  animation: slide-down 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lofi-popover[hidden] { display: none; }
+
+.lofi-popover__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px dashed rgba(var(--c-cyan), 0.25);
+  padding-bottom: 6px;
+}
+
+.lofi-popover__label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+  flex: 1;
+}
+
+.lofi-popover__close {
+  background: transparent;
+  border: 1px solid rgba(var(--c-cyan), 0.4);
+  color: var(--neon-cyan);
+  font-family: inherit;
+  font-size: 14px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lofi-popover__close:hover {
+  background: rgba(var(--c-cyan), 0.15);
+}
+
+.lofi-popover__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lofi-popover__row--toggle { justify-content: center; }
+
+.lofi-popover__vol-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+}
+
+.lofi-popover__vol { flex: 1; }
+.lofi-popover__vol-val {
+  flex: 0 0 28px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.lofi-popover__autoplay {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--neon-cyan);
+  color: var(--neon-cyan);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.lofi-popover__autoplay:hover { box-shadow: var(--glow-cyan); }
+.lofi-popover__autoplay[aria-pressed="false"] {
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+  box-shadow: none;
+}
+
+.lofi-popover__channels {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border-top: 1px dashed rgba(var(--c-cyan), 0.25);
+}
+.lofi-channel {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  border-left: 2px solid transparent;
+  letter-spacing: 0.3px;
+  transition: background 0.15s, color 0.15s;
+}
+.lofi-channel:hover {
+  background: rgba(var(--c-cyan), 0.08);
+  color: var(--neon-cyan);
+}
+.lofi-channel[aria-selected="true"] {
+  background: rgba(var(--c-cyan), 0.12);
+  border-left-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+}
+.lofi-channel__label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lofi-channel__remove {
+  background: transparent;
+  border: none;
+  color: rgba(var(--c-pink), 0.7);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.lofi-channel__remove:hover { color: var(--neon-pink); }
+
+.lofi-popover__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-top: 1px dashed rgba(var(--c-cyan), 0.25);
+  padding-top: 8px;
+}
+.lofi-popover__add-input {
+  flex: 1 1 100%;
+  background: rgba(var(--c-cyan), 0.03);
+  border: 1px solid rgba(var(--c-cyan), 0.3);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 6px;
+  outline: none;
+  caret-color: var(--neon-pink);
+}
+.lofi-popover__add-input:focus {
+  border-color: var(--neon-cyan);
+  background: rgba(var(--c-cyan), 0.06);
+}
+.lofi-popover__add-btn {
+  flex: 1;
+  border: 1px solid rgba(var(--c-cyan), 0.4);
+  background: transparent;
+  color: var(--neon-cyan);
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  padding: 4px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.lofi-popover__add-btn:hover {
+  background: var(--neon-cyan);
+  color: var(--bg-dark);
+}
+
+/* Player de YouTube: tiene que ser visible y ≥200px. Off-screen / opacity:0
+   hace que YouTube corte el audio (y viola su ToS de player mínimo). */
+.lofi-bar__video {
+  flex: 1 0 100%;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 220px;
+  background: #000;
+  border: 1px solid rgba(var(--c-cyan), 0.2);
+  overflow: hidden;
+}
+.lofi-bar__video[hidden] { display: none; }
+.lofi-bar__video iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
 .timer__settings {
   width: 100%;
   display: grid;
@@ -2022,6 +2317,7 @@ input[type="range"]::-moz-range-thumb {
 
   .rom-picker__menu,
   .timer__settings,
+  .lofi-popover,
   .log__body,
   .session-note,
   .session-note__panel,

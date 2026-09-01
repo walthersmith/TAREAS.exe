@@ -1,6 +1,6 @@
 // Service worker: cachea los estáticos para que la app funcione sin conexión.
 // Sólo se registra al servir por HTTP; abriendo por file:// no interviene.
-const CACHE = "tareas-v2";
+const CACHE = "tareas-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -36,6 +36,11 @@ self.addEventListener("activate", (e) => {
 // la siguiente recarga en vez de quedar clavada una versión vieja.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+
+  // No interceptar cross-origin: YouTube, Icecast, etc. Cachear un stream
+  // de radio infinito o devolver index.html como "iframe_api" rompe el lofi.
+  const reqUrl = new URL(e.request.url);
+  if (reqUrl.origin !== self.location.origin) return;
 
   const isNavigation = e.request.mode === "navigate";
   const req = isNavigation ? new Request(e.request.url, { cache: "reload" }) : e.request;

@@ -7,10 +7,18 @@ const LOG_KEY = "todo-app:log-open";
 const ROM_KEY = "todo-app:rom";
 const SOUND_KEY = "todo-app:sound";
 const CUSTOM_ROM_KEY = "todo-app:custom-roms";
+const LOFI_KEY = "todo-app:lofi";
 const RING_CIRCUMFERENCE = 2 * Math.PI * 88;
 
 const DEFAULT_SETTINGS = { focus: 25, short: 5, long: 15, cycles: 4, notePrompt: true };
 const DEFAULT_SOUND = { enabled: true, volume: 0.5, customFile: null }; // customFile: {name, dataUrl, mime, size} | null
+const DEFAULT_LOFI = {
+  enabled: true,
+  channelId: "hunter-lofi",
+  volume: 50,
+  autoplayOnFocus: true,
+  customChannels: [], // [{id, label, kind, videoId?, src?}]
+};
 const MAX_CYCLES = 12;
 const POMO_VISIBLE_MAX = 5;
 const MAX_TAGS_PER_TASK = 5;
@@ -89,6 +97,19 @@ const MODES = {
   long:  { label: "LONG",  next: "focus", duration: 15 * 60 },
 };
 
+// Canales curados. `radio` usa <audio> (Icecast/mp3: funciona en file:// y
+// HTTP). `youtube` usa el IFrame Player visible — YouTube corta el audio si
+// el iframe está off-screen u opacity:0, y no funciona en file://.
+const LOFI_CHANNELS = [
+  { id: "hunter-lofi",      label: "Hunter FM · Lo-Fi",  kind: "radio",    src: "https://live.hunter.fm/lofi_high" },
+  { id: "laut-lofi",        label: "laut.fm · Lofi",     kind: "radio",    src: "https://stream.laut.fm/lofi" },
+  { id: "nightride",        label: "Nightride FM",       kind: "radio",    src: "https://stream.nightride.fm/nightride.mp3" },
+  { id: "lofi-girl-study",  label: "Lofi Girl · study",  kind: "youtube",  videoId: "rFZHOHl-L8A" },
+  { id: "lofi-girl-sleep",  label: "Lofi Girl · sleep",  kind: "youtube",  videoId: "JD-kMIpDfnY" },
+  { id: "claude-fm",        label: "Claude FM",          kind: "youtube",  videoId: "tRsQsTMvPNg" },
+];
+const LOFI_CHANNEL_ALIASES = { groovesalad: "laut-lofi", deepspace: "nightride" };
+
 let tasks = loadTasks();
 let timer = loadTimer();
 let sessions = loadSessions();
@@ -146,6 +167,21 @@ const setSoundPickBtn = document.getElementById("set-sound-pick");
 const setSoundClearBtn = document.getElementById("set-sound-clear");
 const setSoundNameEl = document.getElementById("set-sound-name");
 const setSoundFile = document.getElementById("set-sound-file");
+
+const lofiBtn = document.getElementById("lofi-btn");
+const lofiPopover = document.getElementById("lofi-popover");
+const lofiCurrentChannel = document.getElementById("lofi-current-channel");
+const lofiCloseBtn = document.getElementById("lofi-close");
+const lofiToggleBtn = document.getElementById("lofi-toggle");
+const lofiVolumeInput = document.getElementById("lofi-volume");
+const lofiVolumeVal = document.getElementById("lofi-volume-val");
+const lofiAutoplayBtn = document.getElementById("lofi-autoplay");
+const lofiChannelsList = document.getElementById("lofi-channels");
+const lofiAddForm = document.getElementById("lofi-add");
+const lofiAddLabelInput = document.getElementById("lofi-add-label");
+const lofiAddIdInput = document.getElementById("lofi-add-id");
+const lofiHost = document.getElementById("lofi-host");
+const lofiAudio = document.getElementById("lofi-audio");
 
 const logEl = document.getElementById("log");
 const logToggle = document.getElementById("log-toggle");
@@ -1073,6 +1109,11 @@ function start() {
   intervalId = setInterval(tick, 250);
   renderTimer();
   playSound("timerStart");
+  // Auto-play de música lofi al iniciar focus (no durante breaks):
+  // la música continúa sonando a través de las pausas.
+  if (timer.mode === "focus" && lofiState.enabled && lofiState.autoplayOnFocus && lofiPlayer && !lofiPlayer.isPlaying) {
+    playLofi();
+  }
 }
 
 function pause() {
@@ -1322,6 +1363,11 @@ const ACTIONS = [
   { id: "import",       label: "Importar datos",           kw: "import restore upload",  run: () => importFile.click() },
   // Filter
   { id: "filter-clear", label: "Quitar filtro de tag",     kw: "filter clear tag",       run: () => setTagFilter(null) },
+  // Lofi
+  { id: "lofi-toggle",  label: "Reproducir/Pausar lofi",   kw: "musica audio play pause youtube", run: toggleLofi },
+  { id: "lofi-open",    label: "Abrir reproductor lofi",   kw: "musica canales youtube canales",  run: openLofiPopover },
+  { id: "lofi-next",    label: "Siguiente canal lofi",     kw: "musica canal siguiente cambiar",  run: () => lofiCycleChannel(1) },
+  { id: "lofi-prev",    label: "Canal lofi anterior",      kw: "musica canal anterior cambiar",   run: () => lofiCycleChannel(-1) },
 ];
 
 let paletteActive = 0;
@@ -1449,6 +1495,18 @@ const HELP_CONTENT = [
       ["Audio custom", "Subí tu propio sonido de fin (≤50 KB)"],
       ["Volumen", "Slider en ⚙ Settings"],
       ["Preferencias de sonido", "On/off, volumen, archivo custom"],
+    ],
+  },
+  {
+    title: "Música lofi",
+    rows: [
+      ["Botón ♪", "Abre el reproductor (canal actual, play, volumen, canales)"],
+      ["M", "Reproducir / pausar lofi"],
+      ["Radio", "Hunter FM / laut.fm / Nightride suenan sin video (también en file://)"],
+      ["YouTube", "Lofi Girl, Claude FM y URLs propias; el video queda visible en la barra"],
+      ["Canales custom", "Pegá un ID/URL de YouTube o un stream https://"],
+      ["Auto-play", "Arranca solo al iniciar un focus; continúa en breaks"],
+      ["Persistencia", "Canal, volumen y canales custom se guardan por usuario"],
     ],
   },
 ];
@@ -2131,6 +2189,536 @@ function updateVolumeUI() {
   setVolumeVal.textContent = `${pct}%`;
 }
 
+// ===== LOFI =====
+// Dos motores: <audio> para streams Icecast/mp3 (default, funciona en file://)
+// y YouTube IFrame API para canales YT. YouTube exige un player visible y un
+// Referer HTTP (error 153 si falta); no sirve opacity:0 ni left:-9999px.
+
+function normalizeLofiChannel(c) {
+  if (!c || typeof c.id !== "string" || typeof c.label !== "string") return null;
+  if (c.kind === "radio" && typeof c.src === "string" && /^https:\/\//i.test(c.src)) {
+    return { id: c.id, label: c.label, kind: "radio", src: c.src };
+  }
+  if (typeof c.videoId === "string" && /^[a-zA-Z0-9_-]{11}$/.test(c.videoId)) {
+    return { id: c.id, label: c.label, kind: "youtube", videoId: c.videoId };
+  }
+  if (typeof c.src === "string" && /^https:\/\//i.test(c.src)) {
+    return { id: c.id, label: c.label, kind: "radio", src: c.src };
+  }
+  return null;
+}
+
+function loadLofi() {
+  try {
+    const raw = localStorage.getItem(LOFI_KEY);
+    if (!raw) return { ...DEFAULT_LOFI, customChannels: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_LOFI.enabled,
+      channelId: typeof parsed.channelId === "string" ? parsed.channelId : DEFAULT_LOFI.channelId,
+      volume: Number.isFinite(parsed.volume) ? Math.max(0, Math.min(100, Math.round(parsed.volume))) : DEFAULT_LOFI.volume,
+      autoplayOnFocus: typeof parsed.autoplayOnFocus === "boolean" ? parsed.autoplayOnFocus : DEFAULT_LOFI.autoplayOnFocus,
+      customChannels: Array.isArray(parsed.customChannels)
+        ? parsed.customChannels.map(normalizeLofiChannel).filter(Boolean).slice(0, 20)
+        : [],
+    };
+  } catch {
+    return { ...DEFAULT_LOFI, customChannels: [] };
+  }
+}
+
+function saveLofi() {
+  try {
+    localStorage.setItem(LOFI_KEY, JSON.stringify(lofiState));
+  } catch {}
+}
+
+let lofiState = loadLofi();
+let lofiYTPlayer = null;
+let lofiPlayer = null;    // { isPlaying, wantPlaying }
+let lofiYTReady = false;
+
+function lofiIsHttp() {
+  return location.protocol === "http:" || location.protocol === "https:";
+}
+
+function lofiIsRadio(ch) {
+  return !ch || ch.kind !== "youtube";
+}
+
+function lofiResolveChannel(channelId) {
+  const custom = lofiState.customChannels.find((c) => c.id === channelId);
+  if (custom) return custom;
+  const curated = LOFI_CHANNELS.find((c) => c.id === channelId);
+  return curated || LOFI_CHANNELS[0];
+}
+
+function lofiShowVideo(on) {
+  if (!lofiHost) return;
+  lofiHost.hidden = !on;
+  lofiHost.setAttribute("aria-hidden", on ? "false" : "true");
+}
+
+function stopLofiRadio() {
+  if (!lofiAudio) return;
+  try { lofiAudio.pause(); } catch {}
+  lofiAudio.removeAttribute("src");
+  try { lofiAudio.load(); } catch {}
+}
+
+function pauseLofiYouTube() {
+  if (!lofiYTPlayer) return;
+  try { lofiYTPlayer.pauseVideo(); } catch {}
+}
+
+function lofiEmbedSrc(videoId, autoplay) {
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    playsinline: "1",
+    modestbranding: "1",
+    rel: "0",
+    controls: "1",
+    fs: "0",
+    autoplay: autoplay ? "1" : "0",
+  });
+  if (lofiIsHttp()) params.set("origin", location.origin);
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+}
+
+function lofiEnsureYTIframe(videoId, autoplay) {
+  if (!lofiHost) return null;
+  let iframe = lofiHost.querySelector("iframe");
+  const src = lofiEmbedSrc(videoId, !!autoplay);
+  const currentId = iframe && (iframe.src.match(/embed\/([a-zA-Z0-9_-]{11})/) || [])[1];
+  const needsNewSrc = !iframe || currentId !== videoId || (autoplay && iframe.src.indexOf("autoplay=1") === -1);
+
+  if (!iframe) {
+    iframe = document.createElement("iframe");
+    iframe.id = "lofi-iframe";
+    iframe.title = "Reproductor lofi";
+    iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+    iframe.allowFullscreen = true;
+    iframe.src = src;
+    lofiHost.replaceChildren(iframe);
+    lofiYTPlayer = null;
+    lofiYTReady = false;
+  } else if (needsNewSrc) {
+    // Recargar el embed en el mismo gesto del usuario (autoplay=1).
+    // Cambiar src invalida la instancia YT.Player anterior.
+    iframe.src = src;
+    lofiYTPlayer = null;
+    lofiYTReady = false;
+  }
+  lofiShowVideo(true);
+  return iframe;
+}
+
+function lofiLoadAPI() {
+  if (!lofiIsHttp()) return;
+  if (window.YT && window.YT.Player) {
+    lofiCreatePlayer();
+    return;
+  }
+  if (!document.getElementById("youtube-iframe-api")) {
+    const tag = document.createElement("script");
+    tag.id = "youtube-iframe-api";
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+  }
+  const prev = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => {
+    if (typeof prev === "function") prev();
+    lofiCreatePlayer();
+  };
+}
+
+function lofiCreatePlayer() {
+  if (lofiYTPlayer || !window.YT || !window.YT.Player) return;
+  const channel = lofiResolveChannel(lofiState.channelId);
+  const videoId = channel.kind === "youtube" ? channel.videoId : LOFI_CHANNELS.find((c) => c.kind === "youtube")?.videoId;
+  if (!videoId) return;
+  const iframe = lofiEnsureYTIframe(videoId);
+  if (!iframe) return;
+  try {
+    lofiYTPlayer = new window.YT.Player(iframe, {
+      events: {
+        onReady: (e) => {
+          lofiYTReady = true;
+          try { e.target.setVolume(lofiState.volume); } catch {}
+          const ch = lofiResolveChannel(lofiState.channelId);
+          if (ch.kind === "youtube" && lofiPlayer && lofiPlayer.wantPlaying) {
+            try {
+              e.target.unMute();
+              e.target.playVideo();
+            } catch {}
+          }
+        },
+        onStateChange: (e) => {
+          if (lofiPlayer && !lofiIsRadio(lofiResolveChannel(lofiState.channelId))) {
+            lofiPlayer.isPlaying = (e.data === 1);
+          }
+          lofiUpdateUI();
+        },
+        onError: (e) => {
+          const code = e && e.data;
+          const msg = code === 100 ? "Video no encontrado"
+            : (code === 101 || code === 150) ? "Este video no permite embed"
+            : code === 153 ? "YouTube pide un Referer HTTP — serví la app por HTTP"
+            : "Error del reproductor de YouTube";
+          toast(msg);
+          if (lofiPlayer) {
+            lofiPlayer.wantPlaying = false;
+            lofiPlayer.isPlaying = false;
+          }
+          lofiUpdateUI();
+        },
+      },
+    });
+  } catch (err) {
+    console.warn("YT.Player init failed", err);
+    toast("No se pudo iniciar YouTube");
+  }
+}
+
+function playLofiRadio(channel) {
+  if (!lofiAudio) {
+    toast("Reproductor de audio no disponible");
+    return;
+  }
+  pauseLofiYouTube();
+  lofiShowVideo(false);
+  lofiAudio.volume = lofiState.volume / 100;
+  const next = channel.src;
+  if (lofiAudio.getAttribute("src") !== next) {
+    try { lofiAudio.pause(); } catch {}
+    lofiAudio.src = next;
+    try { lofiAudio.load(); } catch {}
+  }
+  const p = lofiAudio.play();
+  if (p && typeof p.catch === "function") {
+    p.catch((err) => {
+      if (err && err.name === "AbortError") return;
+      toast("No se pudo reproducir el stream");
+      if (lofiPlayer) {
+        lofiPlayer.wantPlaying = false;
+        lofiPlayer.isPlaying = false;
+      }
+      lofiUpdateUI();
+    });
+  }
+}
+
+function playLofiYouTube(channel) {
+  if (!lofiIsHttp()) {
+    toast("YouTube no funciona en file:// — usá un canal de radio o python3 -m http.server");
+    if (lofiPlayer) {
+      lofiPlayer.wantPlaying = false;
+      lofiPlayer.isPlaying = false;
+    }
+    lofiUpdateUI();
+    return;
+  }
+  stopLofiRadio();
+  lofiShowVideo(true);
+  // autoplay=1 en el src tiene que setearse en este clic; playVideo()
+  // asíncrono (onReady) pierde el gesto y Chrome lo silencia.
+  lofiEnsureYTIframe(channel.videoId, true);
+  if (!lofiYTPlayer) {
+    lofiLoadAPI();
+    return;
+  }
+  if (!lofiYTReady) return;
+  try {
+    const url = lofiYTPlayer.getVideoUrl && lofiYTPlayer.getVideoUrl();
+    const same = url && url.indexOf(channel.videoId) !== -1;
+    lofiYTPlayer.setVolume(lofiState.volume);
+    if (typeof lofiYTPlayer.unMute === "function") lofiYTPlayer.unMute();
+    if (same) lofiYTPlayer.playVideo();
+    else lofiYTPlayer.loadVideoById(channel.videoId);
+  } catch {
+    toast("No se pudo reproducir YouTube");
+  }
+}
+
+function playLofi() {
+  if (!lofiState.enabled) return;
+  if (!lofiPlayer) lofiPlayer = { isPlaying: false, wantPlaying: false };
+  lofiPlayer.wantPlaying = true;
+  const channel = lofiResolveChannel(lofiState.channelId);
+  if (lofiIsRadio(channel)) playLofiRadio(channel);
+  else playLofiYouTube(channel);
+  lofiUpdateUI();
+}
+
+function pauseLofi() {
+  if (!lofiPlayer) return;
+  lofiPlayer.wantPlaying = false;
+  lofiPlayer.isPlaying = false;
+  if (lofiAudio) {
+    try { lofiAudio.pause(); } catch {}
+  }
+  pauseLofiYouTube();
+  lofiUpdateUI();
+}
+
+function toggleLofi() {
+  if (lofiPlayer && lofiPlayer.isPlaying) pauseLofi();
+  else playLofi();
+}
+
+function setLofiChannel(channelId) {
+  lofiState.channelId = channelId;
+  saveLofi();
+  const channel = lofiResolveChannel(channelId);
+  const wasPlaying = lofiPlayer && (lofiPlayer.isPlaying || lofiPlayer.wantPlaying);
+  if (lofiIsRadio(channel)) {
+    lofiShowVideo(false);
+    if (wasPlaying) playLofi();
+    else stopLofiRadio();
+  } else if (wasPlaying) {
+    playLofi();
+  } else {
+    if (lofiIsHttp()) {
+      lofiEnsureYTIframe(channel.videoId, false);
+      if (lofiYTPlayer && lofiYTReady) {
+        try { lofiYTPlayer.cueVideoById(channel.videoId); } catch {}
+      } else {
+        lofiLoadAPI();
+      }
+    } else {
+      lofiShowVideo(false);
+    }
+  }
+  lofiRenderChannels();
+  lofiUpdateUI();
+  toast(`Canal: ${channel.label}`);
+}
+
+function setLofiVolume(v) {
+  lofiState.volume = Math.max(0, Math.min(100, Math.round(v)));
+  saveLofi();
+  if (lofiAudio) lofiAudio.volume = lofiState.volume / 100;
+  if (lofiYTPlayer && lofiYTReady) {
+    try { lofiYTPlayer.setVolume(lofiState.volume); } catch {}
+  }
+  if (lofiVolumeInput) lofiVolumeInput.value = String(lofiState.volume);
+  if (lofiVolumeVal) lofiVolumeVal.textContent = String(lofiState.volume);
+}
+
+function setLofiEnabled(on) {
+  lofiState.enabled = !!on;
+  saveLofi();
+  if (!lofiState.enabled && lofiPlayer && lofiPlayer.isPlaying) pauseLofi();
+  lofiUpdateUI();
+}
+
+function setLofiAutoplay(on) {
+  lofiState.autoplayOnFocus = !!on;
+  saveLofi();
+  lofiUpdateUI();
+}
+
+function parseLofiInput(raw) {
+  const yt = extractYouTubeId(raw);
+  if (yt) return { kind: "youtube", videoId: yt };
+  try {
+    const u = new URL(String(raw || "").trim());
+    if (u.protocol === "https:") return { kind: "radio", src: u.href };
+  } catch { /* no es URL */ }
+  return null;
+}
+
+function lofiAddCustom(label, rawInput) {
+  const parsed = parseLofiInput(rawInput);
+  if (!parsed) { toast("ID, URL de YouTube o stream https:// inválido"); return; }
+  if (lofiState.customChannels.length >= 20) { toast("Máximo 20 canales"); return; }
+  const safeLabel = (label || "").trim().slice(0, 40) || "Custom";
+  const entry = { id: `custom-${uid()}`, label: safeLabel, ...parsed };
+  lofiState.customChannels.push(entry);
+  saveLofi();
+  lofiRenderChannels();
+  toast(`+ ${safeLabel}`);
+}
+
+function lofiRemoveCustom(channelId) {
+  lofiState.customChannels = lofiState.customChannels.filter((c) => c.id !== channelId);
+  if (lofiState.channelId === channelId) {
+    lofiState.channelId = LOFI_CHANNELS[0].id;
+    saveLofi();
+    setLofiChannel(lofiState.channelId);
+    return;
+  }
+  saveLofi();
+  lofiRenderChannels();
+}
+
+function lofiCycleChannel(direction) {
+  const all = [...LOFI_CHANNELS, ...lofiState.customChannels];
+  const idx = all.findIndex((c) => c.id === lofiState.channelId);
+  const next = (idx + direction + all.length) % all.length;
+  setLofiChannel(all[next].id);
+}
+
+// Acepta "VIDEO_ID" (11 chars) o URLs tipo:
+//   https://youtu.be/XXXXX
+//   https://www.youtube.com/watch?v=XXXXX
+//   https://www.youtube-nocookie.com/embed/XXXXX
+function extractYouTubeId(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+  try {
+    const u = new URL(s);
+    if (u.hostname.includes("youtu.be")) {
+      const seg = u.pathname.split("/").filter(Boolean)[0];
+      return /^[a-zA-Z0-9_-]{11}$/.test(seg) ? seg : null;
+    }
+    if (u.hostname.includes("youtube.com") || u.hostname.includes("youtube-nocookie.com")) {
+      const v = u.searchParams.get("v");
+      if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+      const m = u.pathname.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+      if (m) return m[1];
+      const live = u.pathname.match(/\/live\/([a-zA-Z0-9_-]{11})/);
+      if (live) return live[1];
+    }
+  } catch { /* no es URL */ }
+  return null;
+}
+
+function lofiUpdateUI() {
+  const playing = lofiPlayer && lofiPlayer.isPlaying && lofiState.enabled;
+  if (lofiBtn) lofiBtn.setAttribute("aria-pressed", playing ? "true" : "false");
+  if (lofiToggleBtn) {
+    lofiToggleBtn.textContent = playing ? "❚❚" : "▶";
+    lofiToggleBtn.setAttribute("aria-pressed", playing ? "true" : "false");
+  }
+  if (lofiAutoplayBtn) {
+    lofiAutoplayBtn.setAttribute("aria-pressed", lofiState.autoplayOnFocus ? "true" : "false");
+    lofiAutoplayBtn.textContent = `AUTO-PLAY EN FOCUS: ${lofiState.autoplayOnFocus ? "ON" : "OFF"}`;
+  }
+  if (lofiCurrentChannel) {
+    const ch = lofiResolveChannel(lofiState.channelId);
+    lofiCurrentChannel.textContent = lofiState.enabled ? ch.label : "OFF";
+  }
+  if (lofiVolumeInput) lofiVolumeInput.value = String(lofiState.volume);
+  if (lofiVolumeVal) lofiVolumeVal.textContent = String(lofiState.volume);
+}
+
+function lofiRenderChannels() {
+  if (!lofiChannelsList) return;
+  lofiChannelsList.innerHTML = "";
+  const all = [
+    ...LOFI_CHANNELS,
+    ...lofiState.customChannels,
+  ];
+  for (const ch of all) {
+    const li = document.createElement("li");
+    li.className = "lofi-channel";
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", lofiState.channelId === ch.id ? "true" : "false");
+    li.tabIndex = 0;
+    li.dataset.channelId = ch.id;
+
+    const label = document.createElement("span");
+    label.className = "lofi-channel__label";
+    label.textContent = ch.label;
+    li.appendChild(label);
+
+    const isCustom = lofiState.customChannels.some((c) => c.id === ch.id);
+    if (isCustom) {
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "lofi-channel__remove";
+      rm.textContent = "×";
+      rm.setAttribute("aria-label", `Quitar ${ch.label}`);
+      rm.addEventListener("click", (e) => {
+        e.stopPropagation();
+        lofiRemoveCustom(ch.id);
+      });
+      li.appendChild(rm);
+    }
+
+    li.addEventListener("click", () => setLofiChannel(ch.id));
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setLofiChannel(ch.id);
+      }
+    });
+    lofiChannelsList.appendChild(li);
+  }
+  lofiUpdateUI();
+}
+
+function openLofiPopover() {
+  if (!lofiPopover) return;
+  if (!settingsPanel.hidden) closeSettings("close");
+  if (!romMenu.hidden) closeRomMenu();
+  lofiPopover.hidden = false;
+  if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "true");
+  lofiRenderChannels();
+  playSound("settingsOpen");
+}
+
+function closeLofiPopover() {
+  if (!lofiPopover || lofiPopover.hidden) return;
+  lofiPopover.hidden = true;
+  if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "false");
+  playSound("settingsClose");
+}
+
+function toggleLofiPopover() {
+  if (!lofiPopover) return;
+  if (lofiPopover.hidden) openLofiPopover();
+  else closeLofiPopover();
+}
+
+function initLofi() {
+  lofiPlayer = { isPlaying: false, wantPlaying: false };
+  const known = LOFI_CHANNELS.some((c) => c.id === lofiState.channelId)
+    || lofiState.customChannels.some((c) => c.id === lofiState.channelId);
+  if (LOFI_CHANNEL_ALIASES[lofiState.channelId]) {
+    lofiState.channelId = LOFI_CHANNEL_ALIASES[lofiState.channelId];
+    saveLofi();
+  } else if (!known) {
+    lofiState.channelId = DEFAULT_LOFI.channelId;
+    saveLofi();
+  }
+  if (lofiAudio) {
+    lofiAudio.volume = lofiState.volume / 100;
+    lofiAudio.addEventListener("playing", () => {
+      if (lofiPlayer) lofiPlayer.isPlaying = true;
+      lofiUpdateUI();
+    });
+    lofiAudio.addEventListener("pause", () => {
+      if (lofiPlayer && lofiIsRadio(lofiResolveChannel(lofiState.channelId))) {
+        lofiPlayer.isPlaying = false;
+        lofiUpdateUI();
+      }
+    });
+    lofiAudio.addEventListener("error", () => {
+      const code = lofiAudio.error && lofiAudio.error.code;
+      if (code === 1) return; // abort al cambiar de canal
+      toast(code === 4 ? "Este stream no permite reproducción embebida" : "Error al cargar el stream de radio");
+      if (lofiPlayer) {
+        lofiPlayer.wantPlaying = false;
+        lofiPlayer.isPlaying = false;
+      }
+      lofiUpdateUI();
+    });
+  }
+  lofiRenderChannels();
+  lofiUpdateUI();
+  const ch = lofiResolveChannel(lofiState.channelId);
+  if (ch.kind === "youtube" && lofiIsHttp()) {
+    lofiEnsureYTIframe(ch.videoId, false);
+    lofiLoadAPI();
+  } else {
+    lofiShowVideo(false);
+  }
+}
+
 // ===== MISSION LOG =====
 function getStats() {
   const focusSessions = sessions.filter((s) => s.mode === "focus");
@@ -2453,7 +3041,7 @@ function toggleLog() {
 // ===== EXPORTAR / IMPORTAR =====
 // Todo el estado vive en localStorage: sin una copia, limpiar los datos del
 // navegador borra el historial sin vuelta atrás.
-const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY, CUSTOM_ROM_KEY];
+const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY, CUSTOM_ROM_KEY, LOFI_KEY];
 
 function exportData() {
   const data = {};
@@ -2650,16 +3238,47 @@ romCurrent.addEventListener("click", (e) => {
   toggleRomMenu();
 });
 
+// --- Lofi popover ---
+lofiBtn && lofiBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleLofiPopover();
+});
+
+lofiCloseBtn && lofiCloseBtn.addEventListener("click", closeLofiPopover);
+
+lofiToggleBtn && lofiToggleBtn.addEventListener("click", toggleLofi);
+
+lofiVolumeInput && lofiVolumeInput.addEventListener("input", (e) => {
+  setLofiVolume(Number(e.target.value));
+});
+
+lofiAutoplayBtn && lofiAutoplayBtn.addEventListener("click", () => {
+  setLofiAutoplay(!lofiState.autoplayOnFocus);
+});
+
+lofiAddForm && lofiAddForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const label = lofiAddLabelInput ? lofiAddLabelInput.value : "";
+  const id = lofiAddIdInput ? lofiAddIdInput.value : "";
+  lofiAddCustom(label, id);
+  if (lofiAddLabelInput) lofiAddLabelInput.value = "";
+  if (lofiAddIdInput) lofiAddIdInput.value = "";
+});
+
 // Click fuera del picker cierra el menú
 document.addEventListener("click", (e) => {
   if (!romMenu.hidden && !romPicker.contains(e.target)) {
     closeRomMenu();
   }
+  // Click fuera del popover lofi también lo cierra (mismo patrón).
+  if (lofiPopover && !lofiPopover.hidden && !lofiPopover.contains(e.target) && !(lofiBtn && lofiBtn.contains(e.target))) {
+    closeLofiPopover();
+  }
 });
 
 // Hover delegado con throttle. Un solo listener cubre todos los botones
 // (WeakMap evita leak: renderTasks() recrea los .item, las claves se GC solas).
-const HOVERABLE = "button, .rom-option, .timer__mode, .item";
+const HOVERABLE = "button, .rom-option, .timer__mode, .item, #lofi-btn";
 const HOVER_THROTTLE_MS = 80;
 const lastHover = new WeakMap();
 document.addEventListener("mouseover", (e) => {
@@ -2678,6 +3297,7 @@ document.addEventListener("keydown", (e) => {
     if (statsModalEl && !statsModalEl.hidden) { closeStatsModal(); return; }
     if (paletteEl && !paletteEl.hidden) { closePalette(); return; }
     if (customRomEl && !customRomEl.hidden) { closeCustomRomModal(); return; }
+    if (lofiPopover && !lofiPopover.hidden) { closeLofiPopover(); return; }
     if (!romMenu.hidden) { closeRomMenu(); return; }
     if (!settingsPanel.hidden) { closeSettings("close"); return; }
     if (activeTagFilter) { setTagFilter(null); return; }
@@ -2713,6 +3333,9 @@ document.addEventListener("keydown", (e) => {
     openHelp();
   } else if (e.key === "s" || e.key === "S") {
     openStatsModal();
+  } else if (e.key === "m" || e.key === "M") {
+    e.preventDefault();
+    toggleLofi();
   }
 });
 
@@ -2760,6 +3383,7 @@ applyRom(currentRom, { silent: true });
 updateSoundToggleUI();
 updateVolumeUI();
 updateSoundFileUI();
+initLofi();
 
 if (timer.running) {
   timer.remaining = remainingFromClock();

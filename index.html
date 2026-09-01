@@ -108,6 +108,47 @@
       </div>
     </section>
 
+    <!-- Barra persistente del reproductor lofi. Vive entre el timer y el
+         formulario: la fila superior del timer queda libre para los modos y
+         los botones de configuración. -->
+    <div class="lofi-bar" id="lofi-bar">
+      <button class="lofi-bar__btn" id="lofi-btn" type="button" aria-label="Música lofi" title="Música lofi (M)" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false">♪</button>
+      <div class="lofi-bar__info">
+        <span class="lofi-bar__label">LOFI</span>
+        <span class="lofi-bar__channel" id="lofi-current-channel">—</span>
+      </div>
+      <button class="lofi-bar__play" id="lofi-toggle" type="button" aria-label="Reproducir / pausar" aria-pressed="false" title="Reproducir / pausar (M)">▶</button>
+
+      <!-- Player de YouTube visible (ToS + error 153 si está off-screen).
+           Se oculta con [hidden] cuando el canal activo es un stream de radio. -->
+      <div class="lofi-bar__video" id="lofi-host" hidden aria-hidden="true"></div>
+
+      <div class="lofi-popover" id="lofi-popover" hidden role="dialog" aria-label="Reproductor lofi">
+        <div class="lofi-popover__head">
+          <span class="lofi-popover__label">MÚSICA</span>
+          <button class="lofi-popover__close" id="lofi-close" type="button" aria-label="Cerrar">×</button>
+        </div>
+
+        <div class="lofi-popover__row">
+          <label class="lofi-popover__vol-label" for="lofi-volume">VOL</label>
+          <input class="lofi-popover__vol" id="lofi-volume" type="range" min="0" max="100" step="1" value="50" aria-label="Volumen lofi" />
+          <span class="lofi-popover__vol-val" id="lofi-volume-val">50</span>
+        </div>
+
+        <div class="lofi-popover__row lofi-popover__row--toggle">
+          <button class="lofi-popover__autoplay" id="lofi-autoplay" type="button" aria-pressed="true" aria-label="Auto-play al iniciar focus">AUTO-PLAY EN FOCUS: ON</button>
+        </div>
+
+        <ul class="lofi-popover__channels" id="lofi-channels" role="listbox" aria-label="Canales lofi"></ul>
+
+        <form class="lofi-popover__add" id="lofi-add">
+          <input class="lofi-popover__add-input" id="lofi-add-label" type="text" placeholder="Nombre del canal" maxlength="40" />
+          <input class="lofi-popover__add-input" id="lofi-add-id" type="text" placeholder="YouTube o https://stream…" maxlength="200" />
+          <button class="lofi-popover__add-btn" type="submit">+ AÑADIR</button>
+        </form>
+      </div>
+    </div>
+
     <form class="form" id="form" autocomplete="off">
       <input
         class="form__input"
@@ -302,6 +343,8 @@
       <div class="stats-modal__body" id="stats-modal-body"></div>
     </div>
   </div>
+
+  <audio id="lofi-audio" preload="none" referrerpolicy="no-referrer"></audio>
 
   <script src="app.js"></script>
 </body>
