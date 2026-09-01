@@ -1,6 +1,6 @@
 // Service worker: cachea los estáticos para que la app funcione sin conexión.
 // Sólo se registra al servir por HTTP; abriendo por file:// no interviene.
-const CACHE = "tareas-v4";
+const CACHE = "tareas-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -42,8 +42,7 @@ self.addEventListener("fetch", (e) => {
   const reqUrl = new URL(e.request.url);
   if (reqUrl.origin !== self.location.origin) return;
 
-  const isNavigation = e.request.mode === "navigate";
-  const req = isNavigation ? new Request(e.request.url, { cache: "reload" }) : e.request;
+  const req = new Request(e.request.url, { cache: "reload" });
 
   e.respondWith(
     fetch(req)

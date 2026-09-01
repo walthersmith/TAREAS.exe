@@ -53,6 +53,8 @@ body {
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
   padding: 48px 16px;
   color: var(--text);
   position: relative;
@@ -95,8 +97,9 @@ body::after {
 .app {
   position: relative;
   z-index: 1;
-  width: 100%;
+  width: min(100%, 520px);
   max-width: 520px;
+  flex: 0 1 520px;
   background: var(--card-bg);
   border: 1px solid var(--neon-cyan);
   border-radius: 0;
@@ -345,12 +348,27 @@ body::after {
 .timer[data-mode="short"][data-running="true"] { box-shadow: var(--glow-pink); }
 .timer[data-mode="long"][data-running="true"]  { box-shadow: var(--glow-purple); }
 
+.timer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.timer__cfgs {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .timer__modes {
   display: flex;
   gap: 4px;
   background: rgba(0, 0, 0, 0.4);
   padding: 4px;
   border: 1px solid rgba(var(--c-cyan), 0.15);
+  min-width: 0;
 }
 .timer__mode {
   background: transparent;
@@ -359,7 +377,7 @@ body::after {
   font-family: inherit;
   font-size: 11px;
   letter-spacing: 1.5px;
-  padding: 6px 14px;
+  padding: 6px 10px;
   cursor: pointer;
   transition: color 0.2s, background 0.2s, text-shadow 0.2s;
 }
@@ -535,8 +553,7 @@ body::after {
 
 /* ---------- TIMER CONFIG (settings) ---------- */
 .timer__cfg {
-  position: absolute;
-  top: 8px;
+  position: relative;
   width: 26px;
   height: 26px;
   background: transparent;
@@ -549,13 +566,8 @@ body::after {
   align-items: center;
   justify-content: center;
   transition: color 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.4s;
-  z-index: 2;
+  flex-shrink: 0;
 }
-/* Los tres botones de la esquina superior derecha se apilan horizontalmente.
-   El orden en el DOM es stats → help → settings; cada uno se ubica a la izquierda del anterior. */
-#stats-btn   { right: 70px; }
-#help-btn    { right: 40px; }
-#settings-btn { right: 8px; }
 .timer__cfg:hover {
   color: var(--neon-cyan);
   border-color: var(--neon-cyan);
@@ -568,90 +580,49 @@ body::after {
   box-shadow: var(--glow-pink);
 }
 
-/* ---------- LOFI BAR ---------- */
-/* La barra del reproductor vive entre el timer y el formulario: muestra el
-   canal actual y un play/pause rápido. El ♪ abre el popover con el resto de
-   los controles. position:relative para anclar el popover. */
+/* ---------- RADIO.exe (lofi dock) ---------- */
 .lofi-bar {
   position: relative;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-  padding: 10px 12px;
-  border: 1px solid rgba(var(--c-cyan), 0.2);
-  background: rgba(var(--c-cyan), 0.02);
-  transition: border-color 0.2s, background 0.2s;
-}
-.lofi-bar:hover {
-  border-color: rgba(var(--c-cyan), 0.35);
+  flex-direction: column;
+  gap: 10px;
 }
 
-.lofi-bar__btn {
-  width: 36px;
-  height: 36px;
-  border: 1px solid rgba(var(--c-cyan), 0.4);
-  background: transparent;
-  color: var(--text-dim);
-  font-family: inherit;
-  font-size: 18px;
-  cursor: pointer;
+.lofi-bar__head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: color 0.2s, border-color 0.2s, box-shadow 0.2s;
-}
-.lofi-bar__btn:hover {
-  color: var(--neon-cyan);
-  border-color: var(--neon-cyan);
-  box-shadow: var(--glow-cyan);
-}
-/* aria-expanded indica popover abierto; aria-pressed indica que está sonando */
-.lofi-bar__btn[aria-expanded="true"] {
-  color: var(--neon-cyan);
-  border-color: var(--neon-cyan);
-  box-shadow: var(--glow-cyan);
-}
-.lofi-bar__btn[aria-pressed="true"]:not([aria-expanded="true"]) {
-  color: var(--neon-pink);
-  border-color: var(--neon-pink);
-  box-shadow: var(--glow-pink);
-}
-
-.lofi-bar__info {
-  flex: 1;
-  display: flex;
-  align-items: baseline;
   gap: 8px;
-  min-width: 0;
 }
-.lofi-bar__label {
-  font-size: 10px;
+.lofi-bar__title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
   letter-spacing: 2px;
+  text-transform: uppercase;
   color: var(--neon-cyan);
   text-shadow: var(--glow-cyan);
-  flex-shrink: 0;
+  min-width: 0;
 }
 .lofi-bar__channel {
-  font-size: 12px;
-  color: var(--text);
+  font-size: 11px;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   letter-spacing: 0.5px;
   min-width: 0;
+  margin: 0;
 }
 
 .lofi-bar__play {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(var(--c-cyan), 0.4);
   background: transparent;
   color: var(--neon-cyan);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   flex-shrink: 0;
   display: flex;
@@ -668,19 +639,44 @@ body::after {
   color: var(--bg-dark);
 }
 
-/* ---------- LOFI POPOVER ---------- */
-.lofi-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 50;
-  width: 280px;
-  max-width: calc(100vw - 32px);
-  background: var(--card-bg);
+.lofi-bar__close {
+  width: 22px;
+  height: 22px;
   border: 1px solid rgba(var(--c-cyan), 0.4);
-  box-shadow: var(--glow-cyan);
-  padding: 10px;
-  animation: slide-down 0.2s ease-out;
+  background: transparent;
+  color: var(--neon-cyan);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lofi-bar__close:hover {
+  background: rgba(var(--c-cyan), 0.15);
+}
+
+.lofi-bar__video {
+  width: 100%;
+  min-width: 200px;
+  min-height: 200px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 1px solid rgba(var(--c-cyan), 0.2);
+  overflow: hidden;
+}
+.lofi-bar__video[hidden] { display: none; }
+.lofi-bar__video iframe {
+  width: 100%;
+  height: 100%;
+  min-width: 200px;
+  min-height: 200px;
+  border: 0;
+  display: block;
+}
+
+.lofi-popover {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -844,23 +840,173 @@ body::after {
   color: var(--bg-dark);
 }
 
-/* Player de YouTube: tiene que ser visible y ≥200px. Off-screen / opacity:0
-   hace que YouTube corte el audio (y viola su ToS de player mínimo). */
-.lofi-bar__video {
-  flex: 1 0 100%;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: 220px;
-  background: #000;
-  border: 1px solid rgba(var(--c-cyan), 0.2);
-  overflow: hidden;
+/* Desktop: ventana compañera al lado de TAREAS.exe (clip-path rompe el iframe de YT). */
+.lofi-bar[data-layout="dock"] {
+  position: sticky;
+  top: 48px;
+  align-self: flex-start;
+  width: min(260px, calc(100vw - 32px));
+  flex: 0 1 260px;
+  z-index: 1;
+  padding: 16px 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--neon-cyan);
+  box-shadow:
+    var(--glow-cyan),
+    inset 0 0 40px rgba(var(--c-cyan), 0.04);
 }
-.lofi-bar__video[hidden] { display: none; }
-.lofi-bar__video iframe {
-  width: 100%;
-  height: 100%;
+.lofi-bar[data-layout="dock"][data-open="false"] {
+  position: fixed;
+  width: 0;
+  min-width: 0;
+  flex-basis: 0;
+  height: 0;
+  padding: 0;
   border: 0;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+.lofi-bar[data-layout="dock"][data-open="false"] .lofi-bar__video:not([hidden]) {
   display: block;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  height: auto;
+  min-width: 200px;
+  min-height: 200px;
+  aspect-ratio: 16 / 9;
+  z-index: 46;
+  pointer-events: auto;
+  box-shadow: var(--glow-cyan);
+}
+.lofi-bar[data-layout="dock"] .lofi-popover {
+  position: static;
+  width: auto;
+  max-width: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  animation: none;
+  display: flex;
+}
+.lofi-bar[data-layout="dock"] .lofi-popover__close,
+.lofi-bar[data-layout="dock"] .lofi-bar__play--pop,
+.lofi-bar[data-layout="dock"] .lofi-popover__head {
+  display: none;
+}
+.lofi-bar[data-layout="dock"][data-open="false"] .lofi-bar__head,
+.lofi-bar[data-layout="dock"][data-open="false"] .lofi-bar__channel,
+.lofi-bar[data-layout="dock"][data-open="false"] .lofi-popover,
+.lofi-bar[data-layout="dock"][data-open="false"] .lofi-bar__close {
+  display: none;
+}
+.lofi-bar[data-layout="dock"]:has(.lofi-bar__video:not([hidden])) {
+  width: 360px;
+  flex-basis: 360px;
+}
+.lofi-bar[data-layout="dock"][data-open="false"]:has(.lofi-bar__video:not([hidden])) {
+  width: 0;
+  flex-basis: 0;
+}
+.lofi-bar[data-layout="dock"] .lofi-bar__video {
+  max-height: none;
+  min-height: 200px;
+}
+
+/* Móvil / ventana estrecha: cajón a la derecha, no encima del timer. */
+.lofi-bar[data-layout="compact"] {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 45;
+}
+.lofi-bar[data-layout="compact"] .lofi-bar__head,
+.lofi-bar[data-layout="compact"] .lofi-bar__channel {
+  display: none;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] {
+  inset: 0 0 0 auto;
+  width: min(320px, 100vw);
+  height: 100vh;
+  max-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 16px 14px;
+  background: var(--card-bg);
+  border: 0;
+  border-left: 1px solid var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+  pointer-events: auto;
+  z-index: 47;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-bar__head {
+  display: flex;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-bar__channel {
+  display: block;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-popover {
+  position: static;
+  width: auto;
+  max-width: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  animation: none;
+  background: transparent;
+  pointer-events: auto;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-popover__close,
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-bar__play--pop,
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-popover__head {
+  display: none;
+}
+.lofi-bar[data-layout="compact"][data-open="true"] .lofi-bar__video:not([hidden]) {
+  position: static;
+  width: 100%;
+  min-width: 0;
+  min-height: 180px;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  pointer-events: auto;
+  box-shadow: none;
+}
+.lofi-bar[data-layout="compact"][data-open="false"] .lofi-popover {
+  display: none;
+}
+.lofi-bar[data-layout="compact"][data-open="false"] .lofi-bar__video:not([hidden]) {
+  display: block;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  height: auto;
+  min-width: 200px;
+  min-height: 200px;
+  aspect-ratio: 16 / 9;
+  max-height: none;
+  z-index: 46;
+  pointer-events: auto;
+  box-shadow: var(--glow-cyan);
+}
+
+#lofi-btn[aria-expanded="true"] {
+  color: var(--neon-cyan);
+  border-color: var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
+}
+#lofi-btn[aria-pressed="true"]:not([aria-expanded="true"]) {
+  color: var(--neon-pink);
+  border-color: var(--neon-pink);
+  box-shadow: var(--glow-pink);
 }
 
 .timer__settings {

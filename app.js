@@ -169,10 +169,13 @@ const setSoundNameEl = document.getElementById("set-sound-name");
 const setSoundFile = document.getElementById("set-sound-file");
 
 const lofiBtn = document.getElementById("lofi-btn");
+const lofiBar = document.getElementById("lofi-bar");
 const lofiPopover = document.getElementById("lofi-popover");
 const lofiCurrentChannel = document.getElementById("lofi-current-channel");
 const lofiCloseBtn = document.getElementById("lofi-close");
+const lofiDockCloseBtn = document.getElementById("lofi-dock-close");
 const lofiToggleBtn = document.getElementById("lofi-toggle");
+const lofiTogglePopBtn = document.getElementById("lofi-toggle-pop");
 const lofiVolumeInput = document.getElementById("lofi-volume");
 const lofiVolumeVal = document.getElementById("lofi-volume-val");
 const lofiAutoplayBtn = document.getElementById("lofi-autoplay");
@@ -1500,10 +1503,10 @@ const HELP_CONTENT = [
   {
     title: "Música lofi",
     rows: [
-      ["Botón ♪", "Abre el reproductor (canal actual, play, volumen, canales)"],
+      ["Botón ♪", "Abre o cierra RADIO.exe (canales, volumen, YouTube)"],
       ["M", "Reproducir / pausar lofi"],
       ["Radio", "Hunter FM / laut.fm / Nightride suenan sin video (también en file://)"],
-      ["YouTube", "Lofi Girl, Claude FM y URLs propias; el video queda visible en la barra"],
+      ["YouTube", "Lofi Girl, Claude FM y URLs propias; el video vive en el dock / mini player"],
       ["Canales custom", "Pegá un ID/URL de YouTube o un stream https://"],
       ["Auto-play", "Arranca solo al iniciar un focus; continúa en breaks"],
       ["Persistencia", "Canal, volumen y canales custom se guardan por usuario"],
@@ -2271,6 +2274,23 @@ function pauseLofiYouTube() {
   try { lofiYTPlayer.pauseVideo(); } catch {}
 }
 
+function lofiDestroyYT() {
+  lofiYTPlayer = null;
+  lofiYTReady = false;
+  if (lofiHost) lofiHost.replaceChildren();
+  lofiShowVideo(false);
+}
+
+function lofiRevealHost() {
+  lofiShowVideo(true);
+  openLofiPanel({ silent: true });
+  if (lofiHost) {
+    lofiHost.style.minWidth = "320px";
+    lofiHost.style.minHeight = "200px";
+    void lofiHost.offsetWidth;
+  }
+}
+
 function lofiEmbedSrc(videoId, autoplay) {
   const params = new URLSearchParams({
     enablejsapi: "1",
@@ -2278,8 +2298,8 @@ function lofiEmbedSrc(videoId, autoplay) {
     modestbranding: "1",
     rel: "0",
     controls: "1",
-    fs: "0",
     autoplay: autoplay ? "1" : "0",
+    mute: autoplay ? "0" : "0",
   });
   if (lofiIsHttp()) params.set("origin", location.origin);
   return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
@@ -2287,6 +2307,8 @@ function lofiEmbedSrc(videoId, autoplay) {
 
 function lofiEnsureYTIframe(videoId, autoplay) {
   if (!lofiHost) return null;
+  // YouTube inicializa a 0×0 si el padre está en display:none → pantalla negra.
+  lofiRevealHost();
   let iframe = lofiHost.querySelector("iframe");
   const src = lofiEmbedSrc(videoId, !!autoplay);
   const currentId = iframe && (iframe.src.match(/embed\/([a-zA-Z0-9_-]{11})/) || [])[1];
@@ -2299,18 +2321,18 @@ function lofiEnsureYTIframe(videoId, autoplay) {
     iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
     iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
     iframe.allowFullscreen = true;
-    iframe.src = src;
+    iframe.width = "360";
+    iframe.height = "203";
     lofiHost.replaceChildren(iframe);
+    void lofiHost.offsetWidth;
+    iframe.src = src;
     lofiYTPlayer = null;
     lofiYTReady = false;
   } else if (needsNewSrc) {
-    // Recargar el embed en el mismo gesto del usuario (autoplay=1).
-    // Cambiar src invalida la instancia YT.Player anterior.
     iframe.src = src;
     lofiYTPlayer = null;
     lofiYTReady = false;
   }
-  lofiShowVideo(true);
   return iframe;
 }
 
@@ -2336,8 +2358,8 @@ function lofiLoadAPI() {
 function lofiCreatePlayer() {
   if (lofiYTPlayer || !window.YT || !window.YT.Player) return;
   const channel = lofiResolveChannel(lofiState.channelId);
-  const videoId = channel.kind === "youtube" ? channel.videoId : LOFI_CHANNELS.find((c) => c.kind === "youtube")?.videoId;
-  if (!videoId) return;
+  if (channel.kind !== "youtube" || !channel.videoId) return;
+  const videoId = channel.videoId;
   const iframe = lofiEnsureYTIframe(videoId);
   if (!iframe) return;
   try {
@@ -2386,8 +2408,7 @@ function playLofiRadio(channel) {
     toast("Reproductor de audio no disponible");
     return;
   }
-  pauseLofiYouTube();
-  lofiShowVideo(false);
+  lofiDestroyYT();
   lofiAudio.volume = lofiState.volume / 100;
   const next = channel.src;
   if (lofiAudio.getAttribute("src") !== next) {
@@ -2420,7 +2441,6 @@ function playLofiYouTube(channel) {
     return;
   }
   stopLofiRadio();
-  lofiShowVideo(true);
   // autoplay=1 en el src tiene que setearse en este clic; playVideo()
   // asíncrono (onReady) pierde el gesto y Chrome lo silencia.
   lofiEnsureYTIframe(channel.videoId, true);
@@ -2473,22 +2493,11 @@ function setLofiChannel(channelId) {
   const channel = lofiResolveChannel(channelId);
   const wasPlaying = lofiPlayer && (lofiPlayer.isPlaying || lofiPlayer.wantPlaying);
   if (lofiIsRadio(channel)) {
-    lofiShowVideo(false);
+    lofiDestroyYT();
     if (wasPlaying) playLofi();
     else stopLofiRadio();
   } else if (wasPlaying) {
     playLofi();
-  } else {
-    if (lofiIsHttp()) {
-      lofiEnsureYTIframe(channel.videoId, false);
-      if (lofiYTPlayer && lofiYTReady) {
-        try { lofiYTPlayer.cueVideoById(channel.videoId); } catch {}
-      } else {
-        lofiLoadAPI();
-      }
-    } else {
-      lofiShowVideo(false);
-    }
   }
   lofiRenderChannels();
   lofiUpdateUI();
@@ -2586,13 +2595,22 @@ function extractYouTubeId(input) {
   return null;
 }
 
+function lofiIsDock() {
+  return lofiBar && lofiBar.dataset.layout === "dock";
+}
+
+function syncLofiPlayButtons(playing) {
+  [lofiToggleBtn, lofiTogglePopBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.textContent = playing ? "❚❚" : "▶";
+    btn.setAttribute("aria-pressed", playing ? "true" : "false");
+  });
+}
+
 function lofiUpdateUI() {
   const playing = lofiPlayer && lofiPlayer.isPlaying && lofiState.enabled;
   if (lofiBtn) lofiBtn.setAttribute("aria-pressed", playing ? "true" : "false");
-  if (lofiToggleBtn) {
-    lofiToggleBtn.textContent = playing ? "❚❚" : "▶";
-    lofiToggleBtn.setAttribute("aria-pressed", playing ? "true" : "false");
-  }
+  syncLofiPlayButtons(playing);
   if (lofiAutoplayBtn) {
     lofiAutoplayBtn.setAttribute("aria-pressed", lofiState.autoplayOnFocus ? "true" : "false");
     lofiAutoplayBtn.textContent = `AUTO-PLAY EN FOCUS: ${lofiState.autoplayOnFocus ? "ON" : "OFF"}`;
@@ -2651,27 +2669,61 @@ function lofiRenderChannels() {
   lofiUpdateUI();
 }
 
-function openLofiPopover() {
-  if (!lofiPopover) return;
-  if (!settingsPanel.hidden) closeSettings("close");
-  if (!romMenu.hidden) closeRomMenu();
-  lofiPopover.hidden = false;
+function isLofiPanelOpen() {
+  return !!(lofiBar && lofiBar.dataset.open === "true");
+}
+
+function openLofiPanel(opts) {
+  if (!lofiBar) return;
+  const silent = opts && opts.silent;
+  const already = isLofiPanelOpen();
+  lofiBar.dataset.open = "true";
+  if (!lofiIsDock()) {
+    if (!settingsPanel.hidden) closeSettings("close");
+    if (!romMenu.hidden) closeRomMenu();
+  }
+  if (lofiPopover) lofiPopover.hidden = false;
   if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "true");
   lofiRenderChannels();
-  playSound("settingsOpen");
+  if (!silent && !already) playSound("settingsOpen");
+}
+
+function closeLofiPanel(opts) {
+  if (!lofiBar || !isLofiPanelOpen()) return;
+  const silent = opts && opts.silent;
+  lofiBar.dataset.open = "false";
+  if (lofiPopover) lofiPopover.hidden = true;
+  if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "false");
+  if (!silent) playSound("settingsClose");
+}
+
+function openLofiPopover() {
+  openLofiPanel();
 }
 
 function closeLofiPopover() {
-  if (!lofiPopover || lofiPopover.hidden) return;
-  lofiPopover.hidden = true;
-  if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "false");
-  playSound("settingsClose");
+  closeLofiPanel();
 }
 
 function toggleLofiPopover() {
-  if (!lofiPopover) return;
-  if (lofiPopover.hidden) openLofiPopover();
-  else closeLofiPopover();
+  if (isLofiPanelOpen()) closeLofiPanel();
+  else openLofiPanel();
+}
+
+const LOFI_DOCK_MQ = window.matchMedia("(min-width: 900px)");
+
+function syncLofiLayout() {
+  if (!lofiBar) return;
+  // Siempre en el flujo (al lado o debajo de TAREAS.exe). El cajón overlay
+  // de compact tapaba el título y el timer.
+  lofiBar.dataset.layout = "dock";
+  if (isLofiPanelOpen()) {
+    if (lofiPopover) lofiPopover.hidden = false;
+    if (lofiBtn) lofiBtn.setAttribute("aria-expanded", "true");
+    lofiRenderChannels();
+  } else if (lofiBtn) {
+    lofiBtn.setAttribute("aria-expanded", "false");
+  }
 }
 
 function initLofi() {
@@ -2710,13 +2762,8 @@ function initLofi() {
   }
   lofiRenderChannels();
   lofiUpdateUI();
-  const ch = lofiResolveChannel(lofiState.channelId);
-  if (ch.kind === "youtube" && lofiIsHttp()) {
-    lofiEnsureYTIframe(ch.videoId, false);
-    lofiLoadAPI();
-  } else {
-    lofiShowVideo(false);
-  }
+  syncLofiLayout();
+  lofiShowVideo(false);
 }
 
 // ===== MISSION LOG =====
@@ -3245,8 +3292,12 @@ lofiBtn && lofiBtn.addEventListener("click", (e) => {
 });
 
 lofiCloseBtn && lofiCloseBtn.addEventListener("click", closeLofiPopover);
+lofiDockCloseBtn && lofiDockCloseBtn.addEventListener("click", closeLofiPanel);
 
 lofiToggleBtn && lofiToggleBtn.addEventListener("click", toggleLofi);
+lofiTogglePopBtn && lofiTogglePopBtn.addEventListener("click", toggleLofi);
+
+LOFI_DOCK_MQ.addEventListener("change", syncLofiLayout);
 
 lofiVolumeInput && lofiVolumeInput.addEventListener("input", (e) => {
   setLofiVolume(Number(e.target.value));
@@ -3270,9 +3321,8 @@ document.addEventListener("click", (e) => {
   if (!romMenu.hidden && !romPicker.contains(e.target)) {
     closeRomMenu();
   }
-  // Click fuera del popover lofi también lo cierra (mismo patrón).
-  if (lofiPopover && !lofiPopover.hidden && !lofiPopover.contains(e.target) && !(lofiBtn && lofiBtn.contains(e.target))) {
-    closeLofiPopover();
+  if (!lofiIsDock() && isLofiPanelOpen() && lofiBar && !lofiBar.contains(e.target) && !(lofiBtn && lofiBtn.contains(e.target))) {
+    closeLofiPanel();
   }
 });
 
@@ -3297,7 +3347,7 @@ document.addEventListener("keydown", (e) => {
     if (statsModalEl && !statsModalEl.hidden) { closeStatsModal(); return; }
     if (paletteEl && !paletteEl.hidden) { closePalette(); return; }
     if (customRomEl && !customRomEl.hidden) { closeCustomRomModal(); return; }
-    if (lofiPopover && !lofiPopover.hidden) { closeLofiPopover(); return; }
+    if (isLofiPanelOpen()) { closeLofiPanel(); return; }
     if (!romMenu.hidden) { closeRomMenu(); return; }
     if (!settingsPanel.hidden) { closeSettings("close"); return; }
     if (activeTagFilter) { setTagFilter(null); return; }

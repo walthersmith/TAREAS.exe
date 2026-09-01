@@ -29,14 +29,18 @@
     </header>
 
     <section class="timer" id="timer" aria-label="Pomodoro">
-      <button class="timer__cfg" id="stats-btn" type="button" aria-label="Ver estadísticas" title="Stats (S)">▦</button>
-      <button class="timer__cfg" id="help-btn" type="button" aria-label="Ayuda" title="Ayuda (?)">?</button>
-      <button class="timer__cfg" id="settings-btn" type="button" aria-label="Configurar tiempos" title="Configurar">⚙</button>
-
-      <div class="timer__modes" role="group" aria-label="Modo del temporizador">
-        <button class="timer__mode timer__mode--active" data-mode="focus" type="button" aria-pressed="true">FOCUS</button>
-        <button class="timer__mode" data-mode="short" type="button" aria-pressed="false">BREAK</button>
-        <button class="timer__mode" data-mode="long" type="button" aria-pressed="false">LONG</button>
+      <div class="timer__toolbar">
+        <div class="timer__modes" role="group" aria-label="Modo del temporizador">
+          <button class="timer__mode timer__mode--active" data-mode="focus" type="button" aria-pressed="true">FOCUS</button>
+          <button class="timer__mode" data-mode="short" type="button" aria-pressed="false">BREAK</button>
+          <button class="timer__mode" data-mode="long" type="button" aria-pressed="false">LONG</button>
+        </div>
+        <div class="timer__cfgs">
+          <button class="timer__cfg" id="lofi-btn" type="button" aria-label="Abrir radio" title="Radio (♪)" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false">♪</button>
+          <button class="timer__cfg" id="stats-btn" type="button" aria-label="Ver estadísticas" title="Stats (S)">▦</button>
+          <button class="timer__cfg" id="help-btn" type="button" aria-label="Ayuda" title="Ayuda (?)">?</button>
+          <button class="timer__cfg" id="settings-btn" type="button" aria-label="Configurar tiempos" title="Configurar">⚙</button>
+        </div>
       </div>
 
       <div class="timer__settings" id="settings" hidden>
@@ -107,47 +111,6 @@
         <span class="timer__task" id="active-task">// no target</span>
       </div>
     </section>
-
-    <!-- Barra persistente del reproductor lofi. Vive entre el timer y el
-         formulario: la fila superior del timer queda libre para los modos y
-         los botones de configuración. -->
-    <div class="lofi-bar" id="lofi-bar">
-      <button class="lofi-bar__btn" id="lofi-btn" type="button" aria-label="Música lofi" title="Música lofi (M)" aria-haspopup="dialog" aria-expanded="false" aria-pressed="false">♪</button>
-      <div class="lofi-bar__info">
-        <span class="lofi-bar__label">LOFI</span>
-        <span class="lofi-bar__channel" id="lofi-current-channel">—</span>
-      </div>
-      <button class="lofi-bar__play" id="lofi-toggle" type="button" aria-label="Reproducir / pausar" aria-pressed="false" title="Reproducir / pausar (M)">▶</button>
-
-      <!-- Player de YouTube visible (ToS + error 153 si está off-screen).
-           Se oculta con [hidden] cuando el canal activo es un stream de radio. -->
-      <div class="lofi-bar__video" id="lofi-host" hidden aria-hidden="true"></div>
-
-      <div class="lofi-popover" id="lofi-popover" hidden role="dialog" aria-label="Reproductor lofi">
-        <div class="lofi-popover__head">
-          <span class="lofi-popover__label">MÚSICA</span>
-          <button class="lofi-popover__close" id="lofi-close" type="button" aria-label="Cerrar">×</button>
-        </div>
-
-        <div class="lofi-popover__row">
-          <label class="lofi-popover__vol-label" for="lofi-volume">VOL</label>
-          <input class="lofi-popover__vol" id="lofi-volume" type="range" min="0" max="100" step="1" value="50" aria-label="Volumen lofi" />
-          <span class="lofi-popover__vol-val" id="lofi-volume-val">50</span>
-        </div>
-
-        <div class="lofi-popover__row lofi-popover__row--toggle">
-          <button class="lofi-popover__autoplay" id="lofi-autoplay" type="button" aria-pressed="true" aria-label="Auto-play al iniciar focus">AUTO-PLAY EN FOCUS: ON</button>
-        </div>
-
-        <ul class="lofi-popover__channels" id="lofi-channels" role="listbox" aria-label="Canales lofi"></ul>
-
-        <form class="lofi-popover__add" id="lofi-add">
-          <input class="lofi-popover__add-input" id="lofi-add-label" type="text" placeholder="Nombre del canal" maxlength="40" />
-          <input class="lofi-popover__add-input" id="lofi-add-id" type="text" placeholder="YouTube o https://stream…" maxlength="200" />
-          <button class="lofi-popover__add-btn" type="submit">+ AÑADIR</button>
-        </form>
-      </div>
-    </div>
 
     <form class="form" id="form" autocomplete="off">
       <input
@@ -249,6 +212,45 @@
 
     <p class="empty" id="empty">No hay tareas. ¡Añade una!</p>
   </main>
+
+  <!-- RADIO.exe: en desktop es un dock al lado de TAREAS.exe; en móvil
+       colapsa a ♪ en el timer + popover, y el video YT va abajo-derecha. -->
+  <aside class="lofi-bar" id="lofi-bar" data-layout="dock" data-open="false" aria-label="Reproductor lofi">
+    <div class="lofi-bar__head">
+      <span class="lofi-bar__title">RADIO.exe</span>
+      <button class="lofi-bar__play" id="lofi-toggle" type="button" aria-label="Reproducir / pausar" aria-pressed="false" title="Reproducir / pausar (M)">▶</button>
+      <button class="lofi-bar__close" id="lofi-dock-close" type="button" aria-label="Cerrar radio">×</button>
+    </div>
+    <p class="lofi-bar__channel" id="lofi-current-channel">—</p>
+
+    <div class="lofi-bar__video" id="lofi-host" hidden aria-hidden="true"></div>
+
+    <div class="lofi-popover" id="lofi-popover" hidden role="dialog" aria-label="Controles lofi">
+      <div class="lofi-popover__head">
+        <span class="lofi-popover__label">MÚSICA</span>
+        <button class="lofi-bar__play lofi-bar__play--pop" id="lofi-toggle-pop" type="button" aria-label="Reproducir / pausar" aria-pressed="false" title="Reproducir / pausar (M)">▶</button>
+        <button class="lofi-popover__close" id="lofi-close" type="button" aria-label="Cerrar">×</button>
+      </div>
+
+      <div class="lofi-popover__row">
+        <label class="lofi-popover__vol-label" for="lofi-volume">VOL</label>
+        <input class="lofi-popover__vol" id="lofi-volume" type="range" min="0" max="100" step="1" value="50" aria-label="Volumen lofi" />
+        <span class="lofi-popover__vol-val" id="lofi-volume-val">50</span>
+      </div>
+
+      <div class="lofi-popover__row lofi-popover__row--toggle">
+        <button class="lofi-popover__autoplay" id="lofi-autoplay" type="button" aria-pressed="true" aria-label="Auto-play al iniciar focus">AUTO-PLAY EN FOCUS: ON</button>
+      </div>
+
+      <ul class="lofi-popover__channels" id="lofi-channels" role="listbox" aria-label="Canales lofi"></ul>
+
+      <form class="lofi-popover__add" id="lofi-add">
+        <input class="lofi-popover__add-input" id="lofi-add-label" type="text" placeholder="Nombre del canal" maxlength="40" />
+        <input class="lofi-popover__add-input" id="lofi-add-id" type="text" placeholder="YouTube o https://stream…" maxlength="200" />
+        <button class="lofi-popover__add-btn" type="submit">+ AÑADIR</button>
+      </form>
+    </div>
+  </aside>
 
   <!-- Modal para anotar qué se hizo en el pomodoro recién terminado.
        Aparece sólo cuando la pestaña tiene foco (si está oculta, sólo la
