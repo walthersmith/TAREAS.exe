@@ -113,6 +113,7 @@ const LOFI_CHANNELS = [
   { id: "hunter-lofi",      label: "Hunter FM · Lo-Fi",  kind: "radio",    src: "https://live.hunter.fm/lofi_high" },
   { id: "laut-lofi",        label: "laut.fm · Lofi",     kind: "radio",    src: "https://stream.laut.fm/lofi" },
   { id: "nightride",        label: "Nightride FM",       kind: "radio",    src: "https://stream.nightride.fm/nightride.mp3" },
+  { id: "coderadio",        label: "Code Radio · fCC",   kind: "radio",    src: "https://coderadio-admin-v2.freecodecamp.org/listen/coderadio/radio.mp3" },
   { id: "lofi-girl-study",  label: "Lofi Girl · study",  kind: "youtube",  videoId: "rFZHOHl-L8A" },
   { id: "lofi-girl-sleep",  label: "Lofi Girl · sleep",  kind: "youtube",  videoId: "JD-kMIpDfnY" },
   { id: "claude-fm",        label: "Claude FM",          kind: "youtube",  videoId: "tRsQsTMvPNg" },
@@ -2419,7 +2420,7 @@ const HELP_CONTENT = [
     rows: [
       ["Botón ♪", "Abre o cierra RADIO.exe (canales, volumen, YouTube)"],
       ["M", "Reproducir / pausar lofi"],
-      ["Radio", "Hunter FM / laut.fm / Nightride suenan sin video (también en file://)"],
+      ["Radio", "Hunter FM / laut.fm / Nightride / Code Radio (fCC) · sin video (también en file://)"],
       ["YouTube", "Lofi Girl, Claude FM y URLs propias; el video vive en el dock / mini player"],
       ["Canales custom", "Pegá un ID/URL de YouTube o un stream https://"],
       ["Auto-play", "Arranca solo al iniciar un focus; continúa en breaks"],
