@@ -4,6 +4,12 @@ const TIMER_KEY = "todo-app:timer";
 const SETTINGS_KEY = "todo-app:settings";
 const SESSIONS_KEY = "todo-app:sessions";
 const LOG_KEY = "todo-app:log-open";
+const ARCHIVE_KEY = "todo-app:archived";
+const BACKLOG_KEY = "todo-app:backlog";
+const TEMPLATES_KEY = "todo-app:templates";
+const LEGACY_BANK_KEY = "todo-app:bank";
+const SIDE_OPEN_KEY = "todo-app:side-open";
+const SIDE_TAB_KEY = "todo-app:side-tab";
 const ROM_KEY = "todo-app:rom";
 const SOUND_KEY = "todo-app:sound";
 const CUSTOM_ROM_KEY = "todo-app:custom-roms";
@@ -24,6 +30,9 @@ const POMO_VISIBLE_MAX = 5;
 const MAX_TAGS_PER_TASK = 5;
 const SESSION_NOTE_TIMEOUT_MS = 30_000;
 const TOAST_TTL_MS = 4000;
+const DEADLINE_SOON_MS = 24 * 60 * 60 * 1000;
+const LOG_SESSIONS_MAX = 20;
+const TAG_SUGGEST_MAX = 8;
 const HEATMAP_Q1 = 15; // minutos para el primer cuartil
 const HEATMAP_Q2 = 45;
 const HEATMAP_Q3 = 90;
@@ -111,16 +120,26 @@ const LOFI_CHANNELS = [
 const LOFI_CHANNEL_ALIASES = { groovesalad: "laut-lofi", deepspace: "nightride" };
 
 let tasks = loadTasks();
+let archived = loadArchived();
+let backlog = loadBacklog();
+let templates = loadTemplates();
+migrateLegacyBank();
 let timer = loadTimer();
 let sessions = loadSessions();
 let activeTaskId = null;
 let editingTaskId = null;
 let activeTagFilter = null; // string | null — no persistido
+let editingCustomRomId = null;
+let sideTab = loadSideTab();
+const deadlineNotified = new Set();
 
 // ===== ELEMENTOS =====
 const form = document.getElementById("form");
 const input = document.getElementById("input");
 const list = document.getElementById("list");
+const listDone = document.getElementById("list-done");
+const doneSection = document.getElementById("done-section");
+const doneCountEl = document.getElementById("done-count");
 const counter = document.getElementById("counter");
 const clearBtn = document.getElementById("clear-completed");
 const exportBtn = document.getElementById("export-btn");
@@ -201,6 +220,8 @@ const logTasksEl = document.getElementById("log-tasks");
 const logTasksBlock = document.getElementById("log-tasks-block");
 const logTagsBlock = document.getElementById("log-tags-block");
 const logTagsEl = document.getElementById("log-tags");
+const logSessionsBlock = document.getElementById("log-sessions-block");
+const logSessionsEl = document.getElementById("log-sessions");
 const heatmapWrap = document.getElementById("heatmap-wrap");
 const heatmapYearEl = document.getElementById("heatmap-year");
 const heatmapTotalEl = document.getElementById("heatmap-total");
@@ -208,9 +229,35 @@ const heatmapTotalEl = document.getElementById("heatmap-total");
 const tagFilterEl = document.getElementById("tag-filter");
 const tagFilterName = document.getElementById("tag-filter-name");
 const tagFilterClear = document.getElementById("tag-filter-clear");
+const tagSuggestEl = document.getElementById("tag-suggest");
+
+const archiveList = document.getElementById("archive-list");
+const archiveEmpty = document.getElementById("archive-empty");
+
+const backlogList = document.getElementById("backlog-list");
+const backlogEmpty = document.getElementById("backlog-empty");
+
+const templateList = document.getElementById("template-list");
+const templateEmpty = document.getElementById("template-empty");
+const templateForm = document.getElementById("template-form");
+const templateInput = document.getElementById("template-input");
+
+const sideDock = document.getElementById("side-dock");
+const sideDockTitle = document.getElementById("side-dock-title");
+const sideDockClose = document.getElementById("side-dock-close");
+const archiveBtn = document.getElementById("archive-btn");
+const backlogBtn = document.getElementById("backlog-btn");
+const templatesBtn = document.getElementById("templates-btn");
+const tabArchive = document.getElementById("tab-archive");
+const tabBacklog = document.getElementById("tab-backlog");
+const tabTemplates = document.getElementById("tab-templates");
+const panelArchive = document.getElementById("panel-archive");
+const panelBacklog = document.getElementById("panel-backlog");
+const panelTemplates = document.getElementById("panel-templates");
 
 const sessionNoteEl = document.getElementById("session-note");
 const sessionNoteInput = document.getElementById("session-note-input");
+const sessionNoteLabel = document.getElementById("session-note-label");
 const sessionNoteSave = document.getElementById("session-note-save");
 const sessionNoteSkip = document.getElementById("session-note-skip");
 const sessionNoteAnnounce = document.getElementById("session-note-announce");
@@ -227,6 +274,7 @@ const romNameEl = document.getElementById("rom-name");
 const romMenu = document.getElementById("rom-menu");
 
 const customRomEl = document.getElementById("custom-rom");
+const customRomTitle = document.getElementById("custom-rom-title");
 const customRomClose = document.getElementById("custom-rom-close");
 const customRomCancel = document.getElementById("custom-rom-cancel");
 const customRomSave = document.getElementById("custom-rom-save");
@@ -252,6 +300,8 @@ function loadTasks() {
         ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))]
             .slice(0, 5)
         : [],
+      deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
+      completedAt: typeof t.completedAt === "number" && Number.isFinite(t.completedAt) ? t.completedAt : null,
     })) : [];
   } catch {
     return [];
@@ -260,6 +310,140 @@ function loadTasks() {
 
 function saveTasks() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+}
+
+function loadArchived() {
+  try {
+    const raw = localStorage.getItem(ARCHIVE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((t) => ({
+      id: t.id,
+      text: t.text,
+      done: !!t.done,
+      pomodoros: Number.isFinite(t.pomodoros) ? t.pomodoros : 0,
+      tags: Array.isArray(t.tags)
+        ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))]
+            .slice(0, 5)
+        : [],
+      deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
+      completedAt: typeof t.completedAt === "number" && Number.isFinite(t.completedAt) ? t.completedAt : null,
+      archivedAt: typeof t.archivedAt === "number" && Number.isFinite(t.archivedAt) ? t.archivedAt : Date.now(),
+    })) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveArchived() {
+  localStorage.setItem(ARCHIVE_KEY, JSON.stringify(archived));
+}
+
+function loadBacklog() {
+  try {
+    const raw = localStorage.getItem(BACKLOG_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((t) => ({
+      id: t.id,
+      text: t.text,
+      done: false,
+      pomodoros: Number.isFinite(t.pomodoros) ? t.pomodoros : 0,
+      tags: Array.isArray(t.tags)
+        ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))]
+            .slice(0, 5)
+        : [],
+      deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
+      completedAt: null,
+    })).filter((t) => t && typeof t.id === "string" && typeof t.text === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveBacklog() {
+  localStorage.setItem(BACKLOG_KEY, JSON.stringify(backlog));
+}
+
+function loadTemplates() {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((t) =>
+      t && typeof t.id === "string" && typeof t.text === "string"
+    ).map((t) => ({
+      id: t.id,
+      text: t.text,
+      tags: Array.isArray(t.tags)
+        ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))]
+            .slice(0, 5)
+        : [],
+    })) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTemplates() {
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates));
+}
+
+// Migración one-shot: el antiguo todo-app:bank guardaba plantillas {id,text,tags}.
+// Las mueve a todo-app:templates y borra la clave legacy.
+function migrateLegacyBank() {
+  try {
+    const raw = localStorage.getItem(LEGACY_BANK_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.removeItem(LEGACY_BANK_KEY);
+      return;
+    }
+    const looksLikeTemplates = parsed.every((t) =>
+      t && typeof t.text === "string" && !("done" in t) && !("pomodoros" in t) && !("deadline" in t)
+    );
+    if (looksLikeTemplates) {
+      const existing = new Set(templates.map((t) => t.text + "\0" + JSON.stringify(t.tags || [])));
+      for (const t of parsed) {
+        if (!t || typeof t.text !== "string") continue;
+        const tags = Array.isArray(t.tags)
+          ? [...new Set(t.tags.filter((x) => typeof x === "string" && x.trim()).map((x) => normalizeTag(x)))].slice(0, 5)
+          : [];
+        const key = t.text + "\0" + JSON.stringify(tags);
+        if (existing.has(key)) continue;
+        templates.push({ id: typeof t.id === "string" ? t.id : uid(), text: t.text, tags });
+        existing.add(key);
+      }
+      saveTemplates();
+    }
+    localStorage.removeItem(LEGACY_BANK_KEY);
+  } catch {
+    try { localStorage.removeItem(LEGACY_BANK_KEY); } catch {}
+  }
+}
+
+function loadSideOpen() {
+  return localStorage.getItem(SIDE_OPEN_KEY) === "1";
+}
+
+function saveSideOpen(open) {
+  localStorage.setItem(SIDE_OPEN_KEY, open ? "1" : "0");
+}
+
+function loadSideTab() {
+  const t = localStorage.getItem(SIDE_TAB_KEY);
+  return ["archive", "backlog", "templates"].includes(t) ? t : "archive";
+}
+
+function saveSideTab(tab) {
+  localStorage.setItem(SIDE_TAB_KEY, tab);
+}
+
+function normalizeTaskOrder() {
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  tasks = [...pending, ...done];
 }
 
 function loadTimer() {
@@ -527,13 +711,26 @@ function renderRomMenu() {
 
     li.append(swatches, name, check);
     li.addEventListener("click", (e) => {
-      // Si el click fue en el botón de borrar (sólo en custom), no activar.
       if (e.target.classList.contains("rom-option__delete")) return;
+      if (e.target.classList.contains("rom-option__edit")) return;
       applyRom(key);
       closeRomMenu();
     });
 
     if (isCustom) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "rom-option__edit";
+      edit.setAttribute("aria-label", `Editar ROM ${rom.name}`);
+      edit.title = "Editar este ROM";
+      edit.textContent = "✎";
+      edit.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeRomMenu();
+        openCustomRomModal(key);
+      });
+      li.appendChild(edit);
+
       const del = document.createElement("button");
       del.type = "button";
       del.className = "rom-option__delete";
@@ -604,16 +801,28 @@ function toggleRomMenu() {
   else closeRomMenu();
 }
 
-// --- Modal de creación de ROM custom ---
-// Pre-rellena con los colores del ROM actual para que sea fácil "forkear".
-function openCustomRomModal() {
-  const current = findRom(currentRom);
-  const seed = current ? current.rom : ROMS.default;
-  customRomNameInput.value = "";
-  customRomPrimaryInput.value = rgbToHex(seed.primary);
-  customRomAccentInput.value = rgbToHex(seed.accent);
-  customRomTertiaryInput.value = rgbToHex(seed.tertiary);
-  customRomHighlightInput.value = rgbToHex(seed.highlight);
+// --- Modal de creación/edición de ROM custom ---
+function openCustomRomModal(editId = null) {
+  editingCustomRomId = editId;
+  if (editId) {
+    const rom = customRoms.find((r) => r.id === editId);
+    if (!rom) { editingCustomRomId = null; return; }
+    customRomTitle.textContent = "[ EDITAR ROM ]";
+    customRomNameInput.value = rom.name;
+    customRomPrimaryInput.value = rgbToHex(rom.primary);
+    customRomAccentInput.value = rgbToHex(rom.accent);
+    customRomTertiaryInput.value = rgbToHex(rom.tertiary);
+    customRomHighlightInput.value = rgbToHex(rom.highlight);
+  } else {
+    const current = findRom(currentRom);
+    const seed = current ? current.rom : ROMS.default;
+    customRomTitle.textContent = "[ CUSTOM ROM ]";
+    customRomNameInput.value = "";
+    customRomPrimaryInput.value = rgbToHex(seed.primary);
+    customRomAccentInput.value = rgbToHex(seed.accent);
+    customRomTertiaryInput.value = rgbToHex(seed.tertiary);
+    customRomHighlightInput.value = rgbToHex(seed.highlight);
+  }
   customRomEl.hidden = false;
   updateCustomRomPreview();
   setTimeout(() => customRomNameInput.focus(), 30);
@@ -622,6 +831,7 @@ function openCustomRomModal() {
 function closeCustomRomModal() {
   if (customRomEl.hidden) return;
   customRomEl.hidden = true;
+  editingCustomRomId = null;
 }
 
 function updateCustomRomPreview() {
@@ -647,8 +857,29 @@ function saveCustomRomFromForm() {
   const highlight = hexToRgb(customRomHighlightInput.value);
   if (!primary || !accent || !tertiary || !highlight) return;
 
+  const romData = {
+    name: name.toUpperCase().slice(0, 20),
+    primary,
+    accent,
+    tertiary,
+    highlight,
+  };
+
+  if (editingCustomRomId) {
+    const idx = customRoms.findIndex((r) => r.id === editingCustomRomId);
+    if (idx >= 0) {
+      customRoms[idx] = { ...customRoms[idx], ...romData };
+      saveCustomRoms();
+      renderRomMenu();
+      if (currentRom === editingCustomRomId) applyRom(editingCustomRomId);
+      closeCustomRomModal();
+      toast(`ROM actualizado: ${romData.name}`);
+    }
+    return;
+  }
+
   const id = "custom-" + uid();
-  const rom = { id, name: name.toUpperCase().slice(0, 20), primary, accent, tertiary, highlight };
+  const rom = { id, ...romData };
   customRoms.push(rom);
   saveCustomRoms();
   renderRomMenu();
@@ -699,43 +930,125 @@ function buildPomodoroBar(count) {
   return bar;
 }
 
-function renderTasks() {
-  list.innerHTML = "";
-  let toFocus = null;
+function getDeadlineStatus(deadline) {
+  if (!deadline) return null;
+  const now = Date.now();
+  if (now >= deadline) return "over";
+  if (now >= deadline - DEADLINE_SOON_MS) return "soon";
+  return "ok";
+}
 
-  // Aplica el filtro de tag (no persistido). El orden de tasks[] se mantiene;
-  // el filtro sólo afecta a lo que se renderiza y al contador.
-  const visible = activeTagFilter
-    ? tasks.filter((t) => (t.tags || []).includes(activeTagFilter))
-    : tasks;
+function formatDeadlineShort(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
-  for (const task of visible) {
-    const li = document.createElement("li");
-    li.className =
-      "item" +
-      (task.done ? " item--done" : "") +
-      (task.id === activeTaskId && !task.done ? " item--focus" : "");
-    li.dataset.id = task.id;
-    li.draggable = true;
+function toDatetimeLocalValue(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.className = "item__checkbox";
-    checkbox.checked = task.done;
-    checkbox.setAttribute("aria-label", "Marcar como completada");
-    checkbox.addEventListener("change", () => toggle(task.id));
+function buildDeadlineControl(task) {
+  const wrap = document.createElement("span");
+  wrap.className = "item__deadline-wrap";
 
-    let body;
-    if (task.id === editingTaskId) {
-      body = buildEditInput(task);
-      toFocus = body;
+  const hidden = document.createElement("input");
+  hidden.type = "datetime-local";
+  hidden.className = "item__deadline-input";
+  hidden.setAttribute("aria-hidden", "true");
+  if (task.deadline) hidden.value = toDatetimeLocalValue(task.deadline);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  const status = getDeadlineStatus(task.deadline);
+  btn.className = "item__deadline" + (status ? ` item__deadline--${status}` : "");
+  btn.textContent = task.deadline ? formatDeadlineShort(task.deadline) : "◷";
+  btn.title = task.deadline ? "Cambiar deadline · click derecho para quitar" : "Añadir deadline";
+  btn.setAttribute("aria-label", task.deadline ? `Deadline ${formatDeadlineShort(task.deadline)}` : "Añadir deadline");
+  if (!task.deadline) btn.classList.add("item__deadline--empty");
+
+  btn.addEventListener("click", () => {
+    hidden.showPicker ? hidden.showPicker() : hidden.click();
+  });
+  btn.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    task.deadline = null;
+    saveTasks();
+    renderTasks();
+  });
+  hidden.addEventListener("change", () => {
+    if (hidden.value) {
+      task.deadline = new Date(hidden.value).getTime();
     } else {
-      body = document.createElement("span");
-      body.className = "item__text";
-      body.textContent = task.text;
-      body.title = "Doble clic para editar";
-      body.addEventListener("dblclick", () => startEditing(task.id));
+      task.deadline = null;
     }
+    saveTasks();
+    renderTasks();
+    checkDeadlines();
+  });
+
+  wrap.append(hidden, btn);
+  return wrap;
+}
+
+function buildTaskItem(task, container) {
+  const li = document.createElement("li");
+  li.className =
+    "item" +
+    (task.done ? " item--done" : "") +
+    (task.id === activeTaskId && !task.done ? " item--focus" : "");
+  li.dataset.id = task.id;
+  if (!task.done) li.draggable = true;
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "item__checkbox";
+  checkbox.checked = task.done;
+  checkbox.setAttribute("aria-label", "Marcar como completada");
+  checkbox.addEventListener("change", () => toggle(task.id));
+
+  const main = document.createElement("div");
+  main.className = "item__main";
+
+  let body;
+  if (task.id === editingTaskId) {
+    body = buildEditInput(task);
+  } else {
+    body = document.createElement("span");
+    body.className = "item__text";
+    body.textContent = task.text;
+    body.title = "Doble clic para editar";
+    body.addEventListener("dblclick", () => startEditing(task.id));
+  }
+  main.appendChild(body);
+
+  if (task.tags && task.tags.length > 0) {
+    main.appendChild(buildTagsRow(task.tags));
+  }
+  if (task.pomodoros > 0) {
+    main.appendChild(buildPomodoroBar(task.pomodoros));
+  }
+
+  li.append(checkbox, main);
+
+  if (!task.done) {
+    li.appendChild(buildDeadlineControl(task));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "item__actions";
+
+  if (!task.done) {
+    const backlogBtn = document.createElement("button");
+    backlogBtn.type = "button";
+    backlogBtn.className = "item__backlog";
+    backlogBtn.setAttribute("aria-label", "Enviar al backlog");
+    backlogBtn.title = "Mover al backlog (para después)";
+    backlogBtn.textContent = "→";
+    backlogBtn.addEventListener("click", () => sendToBacklog(task.id));
+    actions.appendChild(backlogBtn);
 
     const focusBtn = document.createElement("button");
     focusBtn.type = "button";
@@ -744,30 +1057,68 @@ function renderTasks() {
     focusBtn.title = "Seleccionar como target del pomodoro";
     focusBtn.textContent = "◎";
     focusBtn.addEventListener("click", () => setActiveTask(task.id));
-
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "item__delete";
-    del.setAttribute("aria-label", "Eliminar tarea");
-    del.textContent = "×";
-    del.addEventListener("click", () => removeTask(task.id));
+    actions.appendChild(focusBtn);
 
     const drag = document.createElement("span");
     drag.className = "item__drag";
     drag.setAttribute("aria-hidden", "true");
     drag.title = "Arrastra para reordenar";
     drag.textContent = "⠿";
+    actions.appendChild(drag);
+  } else {
+    const archiveBtn = document.createElement("button");
+    archiveBtn.type = "button";
+    archiveBtn.className = "item__archive";
+    archiveBtn.setAttribute("aria-label", "Archivar tarea");
+    archiveBtn.title = "Archivar tarea";
+    archiveBtn.textContent = "⊞";
+    archiveBtn.addEventListener("click", () => archiveTask(task.id));
+    actions.appendChild(archiveBtn);
+  }
 
-    li.append(checkbox, body);
-    if (task.tags && task.tags.length > 0) {
-      li.appendChild(buildTagsRow(task.tags));
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "item__delete";
+  del.setAttribute("aria-label", "Eliminar tarea");
+  del.textContent = "×";
+  del.addEventListener("click", () => removeTask(task.id));
+  actions.appendChild(del);
+
+  li.appendChild(actions);
+
+  if (!task.done) attachDragHandlers(li, task.id, container);
+  container.appendChild(li);
+  return li;
+}
+
+function renderTasks() {
+  list.innerHTML = "";
+  listDone.innerHTML = "";
+  let toFocus = null;
+
+  normalizeTaskOrder();
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+
+  const visiblePending = activeTagFilter
+    ? pending.filter((t) => (t.tags || []).includes(activeTagFilter))
+    : pending;
+  const visibleDone = activeTagFilter
+    ? done.filter((t) => (t.tags || []).includes(activeTagFilter))
+    : done;
+
+  for (const task of visiblePending) {
+    const li = buildTaskItem(task, list);
+    if (task.id === editingTaskId) {
+      const edit = li.querySelector(".item__edit");
+      if (edit) toFocus = edit;
     }
-    if (task.pomodoros > 0) {
-      li.appendChild(buildPomodoroBar(task.pomodoros));
-    }
-    li.append(focusBtn, drag, del);
-    attachDragHandlers(li, task.id);
-    list.appendChild(li);
+  }
+
+  doneSection.hidden = visibleDone.length === 0;
+  doneCountEl.textContent = String(done.length);
+  for (const task of visibleDone) {
+    buildTaskItem(task, listDone);
   }
 
   if (toFocus) {
@@ -775,16 +1126,13 @@ function renderTasks() {
     toFocus.select();
   }
 
-  // El contador refleja el total real, no el filtrado: el filtro es
-  // cosmética y no debe engañar sobre cuántas tareas quedan pendientes.
-  const pending = tasks.filter((t) => !t.done).length;
-  counter.textContent = pending === 1 ? "1 pendiente" : `${pending} pendientes`;
+  const pendingCount = tasks.filter((t) => !t.done).length;
+  counter.textContent = pendingCount === 1 ? "1 pendiente" : `${pendingCount} pendientes`;
 
-  const hasCompleted = tasks.some((t) => t.done);
+  const hasCompleted = done.length > 0;
   clearBtn.disabled = !hasCompleted;
 
-  // Empty sólo cuando no hay tareas en absoluto; si hay pero el filtro las
-  // oculta, mostramos un mensaje específico.
+  const visible = [...visiblePending, ...visibleDone];
   const noResults = visible.length === 0 && activeTagFilter !== null;
   empty.hidden = tasks.length > 0;
   if (noResults) {
@@ -859,6 +1207,7 @@ function buildEditInput(task) {
   };
 
   input.addEventListener("keydown", (e) => {
+    if (handleTagSuggestKeydown(e, input)) return;
     if (e.key === "Enter") {
       e.preventDefault();
       commit();
@@ -868,7 +1217,13 @@ function buildEditInput(task) {
       cancel();
     }
   });
-  input.addEventListener("blur", commit);
+  input.addEventListener("input", () => showTagSuggest(input));
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      hideTagSuggest();
+      commit();
+    }, 150);
+  });
   return input;
 }
 
@@ -905,10 +1260,22 @@ function finishEditing(newText, kind) {
   playSound(kind === "save" ? "editSave" : "editCancel");
 }
 
-function addTask(text) {
+function addTask(text, opts = {}) {
   const parsed = parseTextAndTags(text);
   if (!parsed.text) return;
-  tasks.push({ id: uid(), text: parsed.text, done: false, pomodoros: 0, tags: parsed.tags });
+  const task = {
+    id: uid(),
+    text: parsed.text,
+    done: false,
+    pomodoros: 0,
+    tags: parsed.tags,
+    deadline: opts.deadline || null,
+    completedAt: null,
+  };
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  pending.unshift(task);
+  tasks = [...pending, ...done];
   saveTasks();
   renderTasks();
   playSound("add");
@@ -918,7 +1285,13 @@ function toggle(id) {
   const task = tasks.find((t) => t.id === id);
   if (!task) return;
   task.done = !task.done;
-  if (task.done && activeTaskId === id) activeTaskId = null;
+  if (task.done) {
+    task.completedAt = Date.now();
+    if (activeTaskId === id) activeTaskId = null;
+  } else {
+    task.completedAt = null;
+  }
+  normalizeTaskOrder();
   saveTasks();
   renderTasks();
   playSound("complete");
@@ -934,10 +1307,345 @@ function removeTask(id) {
 }
 
 function clearCompleted() {
-  tasks = tasks.filter((t) => !t.done);
+  archiveCompleted();
+}
+
+function archiveTask(id) {
+  const idx = tasks.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const task = tasks[idx];
+  if (!task.done) return;
+  if (activeTaskId === id) activeTaskId = null;
+  tasks.splice(idx, 1);
+  archived.push({
+    ...task,
+    archivedAt: Date.now(),
+  });
   saveTasks();
+  saveArchived();
   renderTasks();
+  renderArchive();
+  playSound("delete");
+  toast("Tarea archivada");
+}
+
+function archiveCompleted() {
+  const toArchive = tasks.filter((t) => t.done);
+  if (toArchive.length === 0) return;
+  tasks = tasks.filter((t) => !t.done);
+  const now = Date.now();
+  archived.push(...toArchive.map((t) => ({ ...t, archivedAt: now })));
+  saveTasks();
+  saveArchived();
+  renderTasks();
+  renderArchive();
   playSound("deleteBulk");
+  toast(`${toArchive.length} tarea(s) archivada(s)`);
+}
+
+function restoreFromArchive(id) {
+  const idx = archived.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const task = archived.splice(idx, 1)[0];
+  task.done = false;
+  task.completedAt = null;
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  pending.unshift(task);
+  tasks = [...pending, ...done];
+  saveTasks();
+  saveArchived();
+  renderTasks();
+  renderArchive();
+  toast("Tarea restaurada a la cola");
+}
+
+function deleteFromArchive(id) {
+  archived = archived.filter((t) => t.id !== id);
+  saveArchived();
+  renderArchive();
+  playSound("delete");
+}
+
+function renderArchive() {
+  if (!archiveList) return;
+  archiveList.innerHTML = "";
+  archiveEmpty.hidden = archived.length > 0;
+  const sorted = [...archived].sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+  for (const task of sorted) {
+    const li = document.createElement("li");
+    li.className = "archive-item";
+
+    const text = document.createElement("span");
+    text.className = "archive-item__text";
+    text.textContent = task.text;
+
+    const meta = document.createElement("span");
+    meta.className = "archive-item__meta";
+    const parts = [`${task.pomodoros || 0}▮`];
+    if (task.tags && task.tags.length) parts.push(task.tags.map((t) => `#${t}`).join(" "));
+    if (task.deadline && task.completedAt) {
+      parts.push(task.completedAt <= task.deadline ? "a tiempo" : "tarde");
+    }
+    meta.textContent = parts.join(" · ");
+
+    const actions = document.createElement("span");
+    actions.className = "archive-item__actions";
+
+    const restore = document.createElement("button");
+    restore.type = "button";
+    restore.className = "archive-item__btn";
+    restore.textContent = "↩";
+    restore.title = "Restaurar a la cola";
+    restore.addEventListener("click", () => restoreFromArchive(task.id));
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "archive-item__btn";
+    del.textContent = "×";
+    del.title = "Borrar del archivo";
+    del.addEventListener("click", () => deleteFromArchive(task.id));
+
+    actions.append(restore, del);
+    li.append(text, meta, actions);
+    archiveList.appendChild(li);
+  }
+}
+
+function openArchive() {
+  openSideDock("archive");
+}
+
+function closeArchive() {
+  closeSideDock();
+}
+
+function sendToBacklog(id) {
+  const idx = tasks.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const task = tasks[idx];
+  if (task.done) return;
+  if (activeTaskId === id) activeTaskId = null;
+  tasks.splice(idx, 1);
+  backlog.push({
+    id: task.id,
+    text: task.text,
+    done: false,
+    pomodoros: task.pomodoros || 0,
+    tags: [...(task.tags || [])],
+    deadline: task.deadline || null,
+    completedAt: null,
+  });
+  saveTasks();
+  saveBacklog();
+  renderTasks();
+  renderBacklog();
+  playSound("delete");
+  toast("Enviada al backlog");
+}
+
+function pullFromBacklog(id) {
+  const idx = backlog.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  const task = backlog.splice(idx, 1)[0];
+  task.done = false;
+  task.completedAt = null;
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  pending.unshift(task);
+  tasks = [...pending, ...done];
+  saveTasks();
+  saveBacklog();
+  renderTasks();
+  renderBacklog();
+  toast("Traída a la cola");
+}
+
+function deleteFromBacklog(id) {
+  backlog = backlog.filter((t) => t.id !== id);
+  saveBacklog();
+  renderBacklog();
+  playSound("delete");
+}
+
+function renderBacklog() {
+  if (!backlogList) return;
+  backlogList.innerHTML = "";
+  backlogEmpty.hidden = backlog.length > 0;
+  for (const task of backlog) {
+    const li = document.createElement("li");
+    li.className = "backlog-item";
+
+    const text = document.createElement("span");
+    text.className = "backlog-item__text";
+    const tagStr = (task.tags || []).map((t) => `#${t}`).join(" ");
+    text.textContent = tagStr ? `${task.text} ${tagStr}` : task.text;
+
+    const actions = document.createElement("span");
+    actions.className = "backlog-item__actions";
+
+    const pull = document.createElement("button");
+    pull.type = "button";
+    pull.className = "backlog-item__btn";
+    pull.textContent = "↩";
+    pull.title = "Traer a la cola";
+    pull.addEventListener("click", () => pullFromBacklog(task.id));
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "backlog-item__btn";
+    del.textContent = "×";
+    del.title = "Borrar del backlog";
+    del.addEventListener("click", () => deleteFromBacklog(task.id));
+
+    actions.append(pull, del);
+    li.append(text, actions);
+    backlogList.appendChild(li);
+  }
+}
+
+function saveAsTemplate(task) {
+  const tags = [...(task.tags || [])];
+  const exists = templates.some((b) => b.text === task.text && JSON.stringify(b.tags) === JSON.stringify(tags));
+  if (exists) {
+    toast("Ya está en plantillas");
+    return;
+  }
+  templates.push({ id: uid(), text: task.text, tags });
+  saveTemplates();
+  renderTemplates();
+  toast("Guardada como plantilla");
+}
+
+function addTemplate(text) {
+  const parsed = parseTextAndTags(text);
+  if (!parsed.text) return;
+  templates.push({ id: uid(), text: parsed.text, tags: parsed.tags });
+  saveTemplates();
+  renderTemplates();
+  playSound("add");
+}
+
+function deleteTemplate(id) {
+  templates = templates.filter((t) => t.id !== id);
+  saveTemplates();
+  renderTemplates();
+  playSound("delete");
+}
+
+function instantiateFromTemplate(id) {
+  const tpl = templates.find((t) => t.id === id);
+  if (!tpl) return;
+  const tagStr = (tpl.tags || []).map((t) => `#${t}`).join(" ");
+  addTask(tagStr ? `${tpl.text} ${tagStr}` : tpl.text);
+  toast("Añadida a la cola");
+}
+
+function renderTemplates() {
+  if (!templateList) return;
+  templateList.innerHTML = "";
+  templateEmpty.hidden = templates.length > 0;
+  for (const tpl of templates) {
+    const li = document.createElement("li");
+    li.className = "template-item";
+
+    const text = document.createElement("span");
+    text.className = "template-item__text";
+    const tagStr = (tpl.tags || []).map((t) => `#${t}`).join(" ");
+    text.textContent = tagStr ? `${tpl.text} ${tagStr}` : tpl.text;
+    text.title = "Click para añadir a la cola";
+    text.style.cursor = "pointer";
+    text.addEventListener("click", () => instantiateFromTemplate(tpl.id));
+
+    const actions = document.createElement("span");
+    actions.className = "template-item__actions";
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "template-item__btn";
+    del.textContent = "×";
+    del.title = "Borrar plantilla";
+    del.addEventListener("click", () => deleteTemplate(tpl.id));
+
+    actions.appendChild(del);
+    li.append(text, actions);
+    templateList.appendChild(li);
+  }
+}
+
+const SIDE_TITLES = {
+  archive: "[ ARCHIVO ]",
+  backlog: "[ BACKLOG ]",
+  templates: "[ PLANTILLAS ]",
+};
+
+function isSideDockOpen() {
+  return !!(sideDock && sideDock.dataset.open === "true");
+}
+
+function setSideTab(tab) {
+  if (!["archive", "backlog", "templates"].includes(tab)) tab = "archive";
+  sideTab = tab;
+  saveSideTab(tab);
+  if (sideDockTitle) sideDockTitle.textContent = SIDE_TITLES[tab];
+  if (panelArchive) panelArchive.hidden = tab !== "archive";
+  if (panelBacklog) panelBacklog.hidden = tab !== "backlog";
+  if (panelTemplates) panelTemplates.hidden = tab !== "templates";
+  [tabArchive, tabBacklog, tabTemplates].forEach((btn) => {
+    if (!btn) return;
+    const active = btn.dataset.tab === tab;
+    btn.classList.toggle("side-dock__tab--active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  [archiveBtn, backlogBtn, templatesBtn].forEach((btn) => {
+    if (btn) btn.classList.remove("shelves__btn--active");
+  });
+  const activeBtn = tab === "archive" ? archiveBtn : tab === "backlog" ? backlogBtn : templatesBtn;
+  if (activeBtn && isSideDockOpen()) activeBtn.classList.add("shelves__btn--active");
+  if (tab === "archive") renderArchive();
+  else if (tab === "backlog") renderBacklog();
+  else renderTemplates();
+}
+
+function openSideDock(tab) {
+  if (!sideDock) return;
+  if (tab) setSideTab(tab);
+  else setSideTab(sideTab);
+  sideDock.dataset.open = "true";
+  saveSideOpen(true);
+  [archiveBtn, backlogBtn, templatesBtn].forEach((btn) => {
+    if (btn) btn.setAttribute("aria-expanded", "true");
+  });
+  const activeBtn = sideTab === "archive" ? archiveBtn : sideTab === "backlog" ? backlogBtn : templatesBtn;
+  if (activeBtn) activeBtn.classList.add("shelves__btn--active");
+}
+
+function closeSideDock() {
+  if (!sideDock || !isSideDockOpen()) return;
+  sideDock.dataset.open = "false";
+  saveSideOpen(false);
+  [archiveBtn, backlogBtn, templatesBtn].forEach((btn) => {
+    if (!btn) return;
+    btn.setAttribute("aria-expanded", "false");
+    btn.classList.remove("shelves__btn--active");
+  });
+}
+
+function toggleSideDock(tab) {
+  if (isSideDockOpen() && sideTab === tab) {
+    closeSideDock();
+  } else {
+    openSideDock(tab);
+  }
+}
+
+function getAllKnownTags() {
+  const set = new Set();
+  for (const t of tasks) (t.tags || []).forEach((tag) => set.add(tag));
+  for (const t of archived) (t.tags || []).forEach((tag) => set.add(tag));
+  for (const t of backlog) (t.tags || []).forEach((tag) => set.add(tag));
+  for (const t of templates) (t.tags || []).forEach((tag) => set.add(tag));
+  return [...set].sort();
 }
 
 function setActiveTask(id) {
@@ -968,24 +1676,26 @@ function flashPomodoroCell(taskId) {
 // --- Drag & drop reorder ---
 let dragId = null;
 
-function attachDragHandlers(li, id) {
+function attachDragHandlers(li, id, container) {
   li.addEventListener("dragstart", (e) => {
-    // No arrastrar si el filtro está activo: el orden visible no representa
-    // el array y el drop confundiría.
     if (activeTagFilter) { e.preventDefault(); return; }
     if (editingTaskId) { e.preventDefault(); return; }
     dragId = id;
     li.classList.add("item--dragging");
     e.dataTransfer.effectAllowed = "move";
-    // dataTransfer necesita algo para que Firefox dispare el drag.
     try { e.dataTransfer.setData("text/plain", id); } catch {}
   });
   li.addEventListener("dragend", () => {
     dragId = null;
-    list.querySelectorAll(".item--drop-target").forEach((n) => n.classList.remove("item--drop-target"));
+    container.querySelectorAll(".item--drop-target-before, .item--drop-target-after").forEach((n) => {
+      n.classList.remove("item--drop-target-before", "item--drop-target-after");
+    });
   });
   li.addEventListener("dragover", (e) => {
     if (!dragId || dragId === id) return;
+    const src = tasks.find((t) => t.id === dragId);
+    const dst = tasks.find((t) => t.id === id);
+    if (!src || !dst || src.done || dst.done) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     const rect = li.getBoundingClientRect();
@@ -1006,13 +1716,18 @@ function attachDragHandlers(li, id) {
 }
 
 function reorderTasks(srcId, dstId, before) {
-  const srcIdx = tasks.findIndex((t) => t.id === srcId);
-  const dstIdx = tasks.findIndex((t) => t.id === dstId);
+  const src = tasks.find((t) => t.id === srcId);
+  const dst = tasks.find((t) => t.id === dstId);
+  if (!src || !dst || src.done !== dst.done) return;
+  const group = tasks.filter((t) => t.done === src.done);
+  const other = tasks.filter((t) => t.done !== src.done);
+  const srcIdx = group.findIndex((t) => t.id === srcId);
+  const dstIdx = group.findIndex((t) => t.id === dstId);
   if (srcIdx < 0 || dstIdx < 0 || srcIdx === dstIdx) return;
-  const [moved] = tasks.splice(srcIdx, 1);
-  // Re-indexar el destino después de sacar el source
-  const newDst = tasks.findIndex((t) => t.id === dstId);
-  tasks.splice(before ? newDst : newDst + 1, 0, moved);
+  const [moved] = group.splice(srcIdx, 1);
+  const newDst = group.findIndex((t) => t.id === dstId);
+  group.splice(before ? newDst : newDst + 1, 0, moved);
+  tasks = src.done ? [...other, ...group] : [...group, ...other];
   saveTasks();
   renderTasks();
   announce(`Tarea movida a la posición ${tasks.indexOf(moved) + 1}.`);
@@ -1215,7 +1930,7 @@ function onComplete({ silent = false } = {}) {
   // En focus con la pestaña visible, mostramos un toast rápido + el modal
   // de nota es opcional (configurable). El sonido ya disparó arriba.
   if (!silent && finishedMode === "focus" && document.visibilityState === "visible" && settings.notePrompt) {
-    promptForSessionNote();
+    promptForSessionNote(activeTask ? activeTask.text : null);
     toast(`${MODES[finishedMode].label} terminado`);
   } else if (!silent) {
     toast(`${MODES[finishedMode].label} terminado`);
@@ -1256,11 +1971,15 @@ function announce(message) {
 // --- Modal de nota de sesión ---
 // Aparece al terminar un focus (sólo si la pestaña tiene foco). Enter guarda,
 // Esc omite, timeout 30s omite. La nota se guarda en el último session log.
-function promptForSessionNote() {
-  // Si ya hay un modal abierto (caso patológico de doble onComplete), no abrir otro.
+function promptForSessionNote(taskText) {
   if (!sessionNoteEl.hidden) return;
   const targetIdx = sessions.length - 1;
   sessionNoteInput.value = "";
+  if (sessionNoteLabel) {
+    sessionNoteLabel.innerHTML = taskText
+      ? `¿Qué hiciste en “${escapeHtml(taskText)}”? <span class="session-note__hint">(opcional)</span>`
+      : `¿Qué hiciste en este pomodoro? <span class="session-note__hint">(opcional)</span>`;
+  }
   sessionNoteEl.hidden = false;
 
   let settled = false;
@@ -1309,7 +2028,182 @@ function promptForSessionNote() {
   }, 80);
 }
 
-// --- Toasts ---
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatSessionTime(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderLogSessions() {
+  if (!logSessionsEl) return;
+  const focusSessions = sessions
+    .filter((s) => s.mode === "focus")
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, LOG_SESSIONS_MAX);
+
+  logSessionsBlock.hidden = focusSessions.length === 0;
+  logSessionsEl.innerHTML = "";
+
+  for (const s of focusSessions) {
+    const row = document.createElement("div");
+    row.className = "session-row";
+
+    const head = document.createElement("div");
+    head.className = "session-row__head";
+
+    const time = document.createElement("span");
+    time.className = "session-row__time";
+    time.textContent = formatSessionTime(s.ts);
+
+    const mins = document.createElement("span");
+    mins.textContent = `${s.minutes}m`;
+
+    const task = document.createElement("span");
+    task.className = "session-row__task";
+    task.textContent = s.taskText || "sin target";
+
+    head.append(time, mins, task);
+    row.appendChild(head);
+
+    if (s.note) {
+      const note = document.createElement("div");
+      note.className = "session-row__note";
+      note.textContent = `// ${s.note}`;
+      row.appendChild(note);
+    }
+
+    logSessionsEl.appendChild(row);
+  }
+}
+
+function checkDeadlines() {
+  const now = Date.now();
+  for (const task of tasks) {
+    if (task.done || !task.deadline) continue;
+    const status = getDeadlineStatus(task.deadline);
+    if (!status || status === "ok") continue;
+    const key = `${task.id}:${status}`;
+    if (deadlineNotified.has(key)) continue;
+    deadlineNotified.add(key);
+    const msg = status === "over"
+      ? `Incumpliendo: “${task.text}”`
+      : `Se acerca el deadline: “${task.text}”`;
+    toast(msg);
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("TAREAS.exe", { body: msg, silent: false });
+    }
+  }
+}
+
+// --- Tag autocomplete ---
+let tagSuggestActive = -1;
+let tagSuggestInput = null;
+
+function getTagPrefixAtCursor(el) {
+  const val = el.value;
+  const pos = el.selectionStart ?? val.length;
+  const before = val.slice(0, pos);
+  const match = before.match(/#([a-z0-9_\-áéíóúñü]*)$/i);
+  if (!match) return null;
+  return { prefix: match[1].toLowerCase(), start: pos - match[0].length, end: pos };
+}
+
+function hideTagSuggest() {
+  if (tagSuggestEl) tagSuggestEl.hidden = true;
+  tagSuggestActive = -1;
+  tagSuggestInput = null;
+}
+
+function showTagSuggest(el) {
+  const info = getTagPrefixAtCursor(el);
+  if (!info || !tagSuggestEl) { hideTagSuggest(); return; }
+  const matches = getAllKnownTags()
+    .filter((t) => t.startsWith(info.prefix) && t !== info.prefix)
+    .slice(0, TAG_SUGGEST_MAX);
+  if (matches.length === 0) { hideTagSuggest(); return; }
+
+  tagSuggestInput = el;
+  tagSuggestActive = 0;
+  tagSuggestEl.innerHTML = "";
+  matches.forEach((tag, i) => {
+    const li = document.createElement("li");
+    li.className = "tag-suggest__item" + (i === 0 ? " tag-suggest__item--active" : "");
+    li.textContent = `#${tag}`;
+    li.setAttribute("role", "option");
+    li.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      insertTagSuggestion(tag);
+    });
+    tagSuggestEl.appendChild(li);
+  });
+  tagSuggestEl.hidden = false;
+}
+
+function insertTagSuggestion(tag) {
+  if (!tagSuggestInput) return;
+  const info = getTagPrefixAtCursor(tagSuggestInput);
+  if (!info) return;
+  const val = tagSuggestInput.value;
+  const before = val.slice(0, info.start);
+  const after = val.slice(info.end);
+  tagSuggestInput.value = `${before}#${tag} ${after}`;
+  const newPos = before.length + tag.length + 2;
+  tagSuggestInput.setSelectionRange(newPos, newPos);
+  hideTagSuggest();
+  tagSuggestInput.focus();
+}
+
+function handleTagSuggestKeydown(e, el) {
+  if (!tagSuggestEl || tagSuggestEl.hidden) return false;
+  const items = tagSuggestEl.querySelectorAll(".tag-suggest__item");
+  if (items.length === 0) return false;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    tagSuggestActive = (tagSuggestActive + 1) % items.length;
+    items.forEach((it, i) => it.classList.toggle("tag-suggest__item--active", i === tagSuggestActive));
+    return true;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    tagSuggestActive = (tagSuggestActive - 1 + items.length) % items.length;
+    items.forEach((it, i) => it.classList.toggle("tag-suggest__item--active", i === tagSuggestActive));
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    const active = items[tagSuggestActive];
+    if (active) insertTagSuggestion(active.textContent.replace(/^#/, ""));
+    return true;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    hideTagSuggest();
+    return true;
+  }
+  return false;
+}
+
+function bindTagSuggest(el) {
+  if (!el) return;
+  el.addEventListener("input", () => showTagSuggest(el));
+  el.addEventListener("keydown", (e) => {
+    if (handleTagSuggestKeydown(e, el)) return;
+  });
+  el.addEventListener("blur", () => {
+    setTimeout(hideTagSuggest, 150);
+  });
+}
+
+bindTagSuggest(input);
 // Feedback visible en la esquina inferior derecha. Hasta 3 apilados, fade-out.
 function toast(message) {
   if (!toastsEl) return;
@@ -1344,11 +2238,19 @@ const ACTIONS = [
   { id: "mode-long",    label: "Modo · LONG",              kw: "long descanso largo",   run: () => setMode("long") },
   // Tasks
   { id: "task-add",     label: "Añadir tarea",             kw: "new add crear",         run: () => { closePalette(); input.focus(); } },
-  { id: "task-clear",   label: "Limpiar completadas",      kw: "clear clean borrar",    run: () => clearCompleted() },
-  // Log
-  { id: "log-open",     label: "Abrir mission log",        kw: "open log stats",        run: () => openLog() },
-  { id: "log-close",    label: "Cerrar mission log",       kw: "close log",             run: () => closeLog() },
-  { id: "log-toggle",   label: "Toggle mission log",       kw: "log toggle",            run: () => toggleLog() },
+  { id: "task-clear",   label: "Archivar completadas",     kw: "clear archive archivar", run: () => archiveCompleted() },
+  { id: "archive-open", label: "Abrir archivo",            kw: "archive historial baul", run: () => openSideDock("archive") },
+  { id: "backlog-open", label: "Abrir backlog",            kw: "backlog despues later",  run: () => openSideDock("backlog") },
+  { id: "templates-open", label: "Abrir plantillas",       kw: "templates plantillas banco", run: () => openSideDock("templates") },
+  { id: "template-save", label: "Guardar tarea activa como plantilla", kw: "template plantilla guardar", run: () => {
+    const t = tasks.find((x) => x.id === activeTaskId);
+    if (t) saveAsTemplate(t);
+    else toast("Selecciona una tarea con ◎");
+  }},
+  // Log / stats
+  { id: "log-open",     label: "Abrir estadísticas",       kw: "open log stats mission", run: () => openStatsModal() },
+  { id: "log-close",    label: "Cerrar estadísticas",      kw: "close log",             run: () => closeStatsModal() },
+  { id: "log-toggle",   label: "Toggle estadísticas",      kw: "log toggle",            run: () => toggleLog() },
   // Settings
   { id: "settings",     label: "Abrir configuración",      kw: "settings config setup", run: () => openSettings() },
   // Help & Stats
@@ -1361,6 +2263,11 @@ const ACTIONS = [
   { id: "rom-cdproject", label: "ROM · CDPROJECT",kw: "rom theme cdproject yellow",run: () => applyRom("cdproject") },
   { id: "rom-akira",     label: "ROM · AKIRA",    kw: "rom theme akira red",       run: () => applyRom("akira") },
   { id: "rom-custom",    label: "Crear ROM custom", kw: "rom custom nuevo create",  run: () => openCustomRomModal() },
+  { id: "rom-edit",      label: "Editar ROM actual", kw: "rom edit custom", run: () => {
+    const found = findRom(currentRom);
+    if (found && found.isCustom) openCustomRomModal(currentRom);
+    else toast("El ROM activo no es personalizado");
+  }},
   // Data
   { id: "export",       label: "Exportar datos",           kw: "export backup download", run: () => exportData() },
   { id: "import",       label: "Importar datos",           kw: "import restore upload",  run: () => importFile.click() },
@@ -1454,7 +2361,7 @@ const HELP_CONTENT = [
     rows: [
       ["Space", "Iniciar / pausar temporizador"],
       ["R", "Reiniciar temporizador"],
-      ["L", "Toggle Mission Log"],
+      ["L", "Abrir estadísticas (Mission Log)"],
       ["Ctrl/Cmd + K", "Abrir command palette"],
       ["?", "Esta ayuda"],
       ["S", "Modal de estadísticas (▦)"],
@@ -1467,9 +2374,13 @@ const HELP_CONTENT = [
     rows: [
       ["Doble clic en tarea", "Editar texto"],
       ["Tags en el texto", "Escribí #frontend para agregar etiqueta"],
-      ["Click en chip #tag", "Filtrar lista por etiqueta"],
+      ["Click en chip #tag", "Filtrar lista por etiqueta · segundo click quita"],
+      ["# al escribir", "Sugerencias de tags usados"],
       ["Hover sobre tarea", "Aparece el handle ⠿ para arrastrar"],
       ["Botón ◎", "Marcar como tarea activa"],
+      ["Botón ⊞", "Archivar tarea hecha"],
+      ["Botón →", "Enviar pendiente al backlog"],
+      ["◷ en tarea", "Añadir deadline · click derecho quita"],
     ],
   },
   {
@@ -1478,7 +2389,7 @@ const HELP_CONTENT = [
       ["Tabs FOCUS / BREAK / LONG", "Cambiar modo (recuerda el progreso al volver)"],
       ["Auto-advance", "Tras N ciclos focus, salta a break largo"],
       ["Stash de modo", "Al cambiar de modo manualmente guarda el remaining"],
-      ["Nota al terminar", "Anotá qué hiciste (configurable en ⚙)"],
+      ["Nota al terminar", "Anotá qué hiciste (configurable en ⚙) · se ve en ÚLTIMAS SESIONES"],
     ],
   },
   {
@@ -1487,14 +2398,17 @@ const HELP_CONTENT = [
       ["Heatmap", "365 días, color por minutos enfocados"],
       ["TOP TASKS", "Tus tareas con más minutos de focus"],
       ["TOP TAGS", "Tus etiquetas con más minutos"],
-      ["Modal de stats", "Apretá S o el botón 📊 para verlo grande"],
+      ["ÚLTIMAS SESIONES", "Diario de focus con notas y tarea ◎"],
+      ["ARCHIVO / BACKLOG / PLANTILLAS", "Botones bajo el campo de nueva tarea · panel a la izquierda"],
+      ["Modal de stats", "Apretá S o el botón ▦ para verlo grande"],
     ],
   },
   {
     title: "Personalización",
     rows: [
       ["5 ROMs built-in", "Default / Blade / Matrix / CDProject / Akira"],
-      ["Custom ROM", "Menú ROM → '+ NEW ROM' · 4 colores + nombre"],
+      ["Custom ROM", "Menú ROM → '+ NEW ROM' · editar con ✎"],
+      ["Exportar / Importar", "Copia de seguridad en ⚙ Settings"],
       ["Audio custom", "Subí tu propio sonido de fin (≤50 KB)"],
       ["Volumen", "Slider en ⚙ Settings"],
       ["Preferencias de sonido", "On/off, volumen, archivo custom"],
@@ -3064,31 +3978,28 @@ function renderMissionLog() {
   });
 
   renderHeatmap();
+  renderLogSessions();
 }
 
 function openLog() {
-  logEl.dataset.open = "true";
-  logToggle.setAttribute("aria-expanded", "true");
-  logBody.hidden = false;
-  saveLogOpen(true);
+  openStatsModal();
 }
 
 function closeLog() {
-  logEl.dataset.open = "false";
-  logToggle.setAttribute("aria-expanded", "false");
-  logBody.hidden = true;
-  saveLogOpen(false);
+  closeStatsModal();
 }
 
 function toggleLog() {
-  if (logEl.dataset.open === "true") closeLog();
-  else openLog();
+  if (statsModalEl && !statsModalEl.hidden) closeStatsModal();
+  else openStatsModal();
 }
 
 // ===== EXPORTAR / IMPORTAR =====
 // Todo el estado vive en localStorage: sin una copia, limpiar los datos del
 // navegador borra el historial sin vuelta atrás.
-const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ROM_KEY, SOUND_KEY, CUSTOM_ROM_KEY, LOFI_KEY];
+const DATA_KEYS = [STORAGE_KEY, TIMER_KEY, SETTINGS_KEY, SESSIONS_KEY, LOG_KEY, ARCHIVE_KEY, BACKLOG_KEY, TEMPLATES_KEY, ROM_KEY, SOUND_KEY, CUSTOM_ROM_KEY, LOFI_KEY];
+// Clave legacy: backups viejos con plantillas en todo-app:bank; al importar se migra a templates.
+const IMPORT_KEYS = [...DATA_KEYS, LEGACY_BANK_KEY];
 
 function exportData() {
   const data = {};
@@ -3124,7 +4035,7 @@ function parseBackup(raw) {
   if (!parsed || typeof parsed !== "object" || !parsed.data || typeof parsed.data !== "object") {
     throw new Error("no parece una copia de esta app");
   }
-  const entries = Object.entries(parsed.data).filter(([k]) => DATA_KEYS.includes(k));
+  const entries = Object.entries(parsed.data).filter(([k]) => IMPORT_KEYS.includes(k));
   if (entries.length === 0) throw new Error("no contiene datos reconocibles");
   for (const [k, v] of entries) {
     if (typeof v !== "string") throw new Error(`el campo ${k} está corrupto`);
@@ -3168,7 +4079,7 @@ function importData(raw) {
 
   playSound("import");
   pause();
-  DATA_KEYS.forEach((k) => localStorage.removeItem(k));
+  IMPORT_KEYS.forEach((k) => localStorage.removeItem(k));
   entries.forEach(([k, v]) => localStorage.setItem(k, v));
   // Recargar es la forma más segura de re-inicializar todo el estado a la vez.
   location.reload();
@@ -3177,6 +4088,7 @@ function importData(raw) {
 // ===== EVENTOS =====
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  hideTagSuggest();
   addTask(input.value);
   input.value = "";
   input.focus();
@@ -3270,7 +4182,29 @@ setNotePromptToggle && setNotePromptToggle.addEventListener("click", () => {
   updateNotePromptUI();
 });
 
-logToggle.addEventListener("click", toggleLog);
+logToggle && logToggle.addEventListener("click", toggleLog);
+
+archiveBtn && archiveBtn.addEventListener("click", () => toggleSideDock("archive"));
+backlogBtn && backlogBtn.addEventListener("click", () => toggleSideDock("backlog"));
+templatesBtn && templatesBtn.addEventListener("click", () => toggleSideDock("templates"));
+sideDockClose && sideDockClose.addEventListener("click", closeSideDock);
+
+[tabArchive, tabBacklog, tabTemplates].forEach((btn) => {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (!isSideDockOpen()) openSideDock(btn.dataset.tab);
+    else setSideTab(btn.dataset.tab);
+  });
+});
+
+templateForm && templateForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (templateInput) {
+    addTemplate(templateInput.value);
+    templateInput.value = "";
+    templateInput.focus();
+  }
+});
 
 tagFilterClear.addEventListener("click", () => setTagFilter(null));
 
@@ -3278,6 +4212,7 @@ tagFilterClear.addEventListener("click", () => setTagFilter(null));
 // recalcula de inmediato en vez de esperar al siguiente tick.
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && timer.running) tick();
+  if (!document.hidden) checkDeadlines();
 });
 
 romCurrent.addEventListener("click", (e) => {
@@ -3347,12 +4282,12 @@ document.addEventListener("keydown", (e) => {
     if (statsModalEl && !statsModalEl.hidden) { closeStatsModal(); return; }
     if (paletteEl && !paletteEl.hidden) { closePalette(); return; }
     if (customRomEl && !customRomEl.hidden) { closeCustomRomModal(); return; }
+    if (isSideDockOpen()) { closeSideDock(); return; }
     if (isLofiPanelOpen()) { closeLofiPanel(); return; }
     if (!romMenu.hidden) { closeRomMenu(); return; }
     if (!settingsPanel.hidden) { closeSettings("close"); return; }
     if (activeTagFilter) { setTagFilter(null); return; }
   }
-  // Alt+↑/↓ sobre una tarea: reordenar por teclado. Antes del guard de INPUT
   // porque el checkbox es INPUT pero queremos actuar sobre él.
   if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
     const li = e.target.closest && e.target.closest(".item");
@@ -3391,14 +4326,18 @@ document.addEventListener("keydown", (e) => {
 
 function moveTaskByKeyboard(id, up) {
   if (activeTagFilter) return;
-  const idx = tasks.findIndex((t) => t.id === id);
+  const task = tasks.find((t) => t.id === id);
+  if (!task || task.done) return;
+  const pending = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+  const idx = pending.findIndex((t) => t.id === id);
   if (idx < 0) return;
   const target = up ? idx - 1 : idx + 1;
-  if (target < 0 || target >= tasks.length) return;
-  [tasks[idx], tasks[target]] = [tasks[target], tasks[idx]];
+  if (target < 0 || target >= pending.length) return;
+  [pending[idx], pending[target]] = [pending[target], pending[idx]];
+  tasks = [...pending, ...done];
   saveTasks();
   renderTasks();
-  // Devolver el foco a la misma tarea en su nueva posición.
   const moved = list.querySelector(`[data-id="${id}"] .item__checkbox`);
   if (moved) moved.focus();
   announce(`Tarea movida a la posición ${target + 1}.`);
@@ -3443,11 +4382,19 @@ if (timer.running) {
 }
 
 renderTimer();
+normalizeTaskOrder();
 renderTasks();
+renderArchive();
+renderBacklog();
+renderTemplates();
 renderMissionLog();
+checkDeadlines();
 
-// Restaurar estado abierto/cerrado del log
-if (loadLogOpen()) openLog();
+if (loadLogOpen()) {
+  // Ya no hay panel inline; el flag antiguo no reabre nada en el scroll.
+  saveLogOpen(false);
+}
+if (loadSideOpen()) openSideDock(sideTab);
 
 // Retomar la sesión que quedó a medias al cerrar la página.
 if (timer.running) {

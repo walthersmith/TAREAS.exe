@@ -135,3 +135,71 @@ The `Esc` chain in the global handler is: palette → ROM menu → settings → 
 | `todo-app:sessions` | `note?: string` (≤200) | `loadSessions` already passes unknown fields through |
 
 `parseBackup` is unchanged — the envelope dumps raw `localStorage` strings, so old backups load fine and `loadTasks`/`loadSessions` quietly fill the new fields.
+
+## Fase 7: cola, archivo, backlog, plantillas, deadlines, notas visibles
+
+### Cola de tareas
+
+- `addTask` hace **unshift** entre las pendientes: lo nuevo queda primero.
+- `normalizeTaskOrder()` mantiene `tasks[]` como `[...pendientes, ...hechas]`.
+- `renderTasks()` pinta dos listas: `#list` (pendientes) y `#list-done` bajo `// HECHAS (n)`.
+- Drag y `Alt+↑/↓` sólo reordenan dentro del mismo grupo (pendiente↔pendiente).
+- Import/export viven en el panel ⚙ Settings (`#export-btn`, `#import-btn`).
+- Cada `.item` usa `.item__main` (texto + tags) y `.item__actions` (botones); `.item__text` tiene `min-width: 0` y `overflow-wrap: break-word` para no apilar una letra por línea en móvil.
+
+### Archivo (`todo-app:archived`)
+
+Baúl de tareas **ya terminadas** sacadas de la cola. No confundir con el Mission Log (sesiones de focus) ni con el backlog.
+
+- `archiveTask(id)` / `archiveCompleted()` mueven de `tasks[]` a `archived[]` con `archivedAt`.
+- UI en el panel lateral `#side-dock` **a la izquierda** de TAREAS.exe (botones ▤/☰/◇ **bajo el form** de nueva tarea): restaurar (vuelve pendiente) o borrar.
+- Footer: **Archivar completadas**.
+- Se conserva el `id` original para que `sessions[].taskId` siga resolviendo.
+
+### Backlog (`todo-app:backlog`)
+
+Cola “para después”: tareas **reales** movidas desde pendientes (mismo `id`), no plantillas.
+
+- `sendToBacklog(id)` / `pullFromBacklog(id)` (unshift a la cola).
+- Botón `→` en pendientes; pestaña BACKLOG (☰) en el side-dock.
+- Migración: el antiguo `todo-app:bank` (plantillas) se copia a `todo-app:templates` en el primer load y se borra.
+
+### Plantillas (`todo-app:templates`)
+
+`{id, text, tags}` — feature separada del backlog.
+
+- Formulario en pestaña PLANTILLAS (◇); click instancia con **id nuevo** vía `addTask`.
+- Palette: “Guardar tarea activa como plantilla”.
+- `DATA_KEYS` incluye `ARCHIVE_KEY`, `BACKLOG_KEY`, `TEMPLATES_KEY`. Import también acepta `LEGACY_BANK_KEY` para backups viejos.
+
+### Panel lateral (`#side-dock`)
+
+Companion **a la izquierda** de `.app` (mismo patrón que RADIO.exe a la derecha): abierto ~280px sticky; cerrado `width/height: 0`. Tabs ARCHIVO | BACKLOG | PLANTILLAS. Botones de apertura en `.shelves` bajo `#form`. Persistencia `todo-app:side-open` + `todo-app:side-tab`. En `max-width: 899px` se abre debajo a ancho completo. Esc cierra el dock.
+
+### Deadlines
+
+- Campo opcional `deadline: number | null` (epoch ms) y `completedAt` al marcar hecha.
+- Badge `⏱` / fecha en pendientes; click abre `datetime-local`; click derecho quita.
+- Estado derivado: **ok** (cyan), **soon** ≤24h (yellow), **over** (pink).
+- `checkDeadlines()` en INIT y `visibilitychange`; toasts sin repetir por sesión (`deadlineNotified` Set).
+
+### Notas de sesión visibles
+
+- `sessions[].note` ya existía; ahora `// ÚLTIMAS SESIONES` en el modal de stats (▦ / S / L) lista focus recientes (hora, minutos, tarea ◎, nota).
+- El bloque colapsable STATS/[ MISSION LOG ] se quitó del scroll principal; la zona de tareas va en `.queue` con etiqueta `// ACTIVIDADES`.
+- El modal cita la tarea activa: `¿Qué hiciste en “Fix login”?`
+
+### Tags y ROM
+
+- `.tag-filter[hidden] { display: none }` — el filtro chip/×/Esc sí se oculta.
+- Autocomplete `#` en `#input` y edición inline (`#tag-suggest`).
+- ROM custom editable: botón ✎ en menú; mismo modal, mismo `id` al guardar.
+
+### Schema additions (Fase 7+)
+
+| Slice | New field | Loader behavior |
+|---|---|---|
+| `todo-app:tasks` | `deadline?: number \| null`, `completedAt?: number \| null` | default `null` |
+| `todo-app:archived` | array de tareas + `archivedAt` | defensive `loadArchived()` |
+| `todo-app:backlog` | mismas campos que tarea (done=false) | defensive `loadBacklog()` |
+| `todo-app:templates` | `{id, text, tags[]}` | defensive `loadTemplates()`; migra desde `todo-app:bank` |

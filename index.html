@@ -12,6 +12,35 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Panel lateral IZQUIERDA: Archivo / Backlog / Plantillas -->
+  <aside class="side-dock" id="side-dock" data-open="false" aria-label="Archivo backlog y plantillas">
+    <div class="side-dock__head">
+      <h2 class="side-dock__title" id="side-dock-title">[ ARCHIVO ]</h2>
+      <button class="side-dock__close" id="side-dock-close" type="button" aria-label="Cerrar panel">×</button>
+    </div>
+    <div class="side-dock__tabs" role="tablist">
+      <button class="side-dock__tab side-dock__tab--active" id="tab-archive" type="button" role="tab" aria-selected="true" data-tab="archive">ARCHIVO</button>
+      <button class="side-dock__tab" id="tab-backlog" type="button" role="tab" aria-selected="false" data-tab="backlog">BACKLOG</button>
+      <button class="side-dock__tab" id="tab-templates" type="button" role="tab" aria-selected="false" data-tab="templates">PLANTILLAS</button>
+    </div>
+    <div class="side-dock__panel" id="panel-archive" role="tabpanel">
+      <ul class="archive-list" id="archive-list"></ul>
+      <p class="archive-empty" id="archive-empty" hidden>// sin tareas archivadas</p>
+    </div>
+    <div class="side-dock__panel" id="panel-backlog" role="tabpanel" hidden>
+      <ul class="backlog-list" id="backlog-list"></ul>
+      <p class="backlog-empty" id="backlog-empty" hidden>// backlog vacío</p>
+    </div>
+    <div class="side-dock__panel" id="panel-templates" role="tabpanel" hidden>
+      <form class="template-form" id="template-form" autocomplete="off">
+        <input class="template-form__input" id="template-input" type="text" placeholder="> Plantilla · #tags" maxlength="200" />
+        <button class="template-form__btn" type="submit" aria-label="Añadir plantilla">+</button>
+      </form>
+      <ul class="template-list" id="template-list"></ul>
+      <p class="template-empty" id="template-empty" hidden>// sin plantillas</p>
+    </div>
+  </aside>
+
   <main class="app">
     <header class="app__header">
       <h1 class="app__title">TAREAS.exe</h1>
@@ -83,6 +112,11 @@
           <div class="setting__group">
             <button class="setting__toggle" id="set-note-prompt" type="button" aria-pressed="true" aria-label="Pedir nota al terminar focus">NOTA AL TERMINAR</button>
           </div>
+          <div class="setting__group setting__group--data">
+            <button class="setting__btn setting__btn--small" id="export-btn" type="button" title="Descargar una copia de tareas, sesiones y ajustes">EXPORTAR</button>
+            <button class="setting__btn setting__btn--small" id="import-btn" type="button" title="Restaurar desde una copia (sustituye los datos actuales)">IMPORTAR</button>
+            <input type="file" id="import-file" accept="application/json,.json" hidden />
+          </div>
         </div>
       </div>
 
@@ -112,34 +146,49 @@
       </div>
     </section>
 
-    <form class="form" id="form" autocomplete="off">
-      <input
-        class="form__input"
-        id="input"
-        type="text"
-        placeholder="> Nueva tarea · #tag1 #tag2 (Ctrl+K)"
-        maxlength="200"
-        required
-      />
-      <button class="form__button" type="submit" aria-label="Añadir tarea">
-        +
-      </button>
-    </form>
+    <section class="queue" aria-label="Cola de actividades">
+      <div class="queue__label">// ACTIVIDADES</div>
 
-    <div class="tag-filter" id="tag-filter" hidden>
-      <span class="tag-filter__prefix">// filtrando por</span>
-      <span class="tag-filter__tag" id="tag-filter-name"></span>
-      <button class="tag-filter__clear" id="tag-filter-clear" type="button" aria-label="Quitar filtro">×</button>
-    </div>
+      <form class="form" id="form" autocomplete="off">
+        <div class="form__wrap">
+          <input
+            class="form__input"
+            id="input"
+            type="text"
+            placeholder="> Nueva tarea · #tag1 #tag2 (Ctrl+K)"
+            maxlength="200"
+            required
+          />
+          <ul class="tag-suggest" id="tag-suggest" hidden role="listbox"></ul>
+        </div>
+        <button class="form__button" type="submit" aria-label="Añadir tarea">
+          +
+        </button>
+      </form>
 
-    <ul class="list" id="list"></ul>
+      <div class="shelves" role="group" aria-label="Archivo, backlog y plantillas">
+        <button class="shelves__btn" id="archive-btn" type="button" aria-label="Abrir archivo" title="Archivo" aria-expanded="false">▤ ARCHIVO</button>
+        <button class="shelves__btn" id="backlog-btn" type="button" aria-label="Abrir backlog" title="Backlog" aria-expanded="false">☰ BACKLOG</button>
+        <button class="shelves__btn" id="templates-btn" type="button" aria-label="Abrir plantillas" title="Plantillas" aria-expanded="false">◇ PLANTILLAS</button>
+      </div>
 
-    <section class="log" id="log" data-open="false">
-      <button class="log__header" id="log-toggle" type="button" aria-expanded="false">
-        <span class="log__title">[ MISSION LOG ]</span>
-        <span class="log__caret" id="log-caret">▸</span>
-      </button>
-      <div class="log__body" id="log-body" hidden>
+      <div class="tag-filter" id="tag-filter" hidden>
+        <span class="tag-filter__prefix">// filtrando por</span>
+        <span class="tag-filter__tag" id="tag-filter-name"></span>
+        <button class="tag-filter__clear" id="tag-filter-clear" type="button" aria-label="Quitar filtro">×</button>
+      </div>
+
+      <ul class="list" id="list"></ul>
+
+      <div class="list-section" id="done-section" hidden>
+        <div class="list-section__header">// HECHAS (<span id="done-count">0</span>)</div>
+        <ul class="list list--done" id="list-done"></ul>
+      </div>
+    </section>
+
+    <!-- Fuente oculta para el modal de stats (▦ / S). Ya no vive en el scroll principal. -->
+    <div id="log" hidden aria-hidden="true">
+      <div class="log__body" id="log-body">
         <dl class="log__stats">
           <div class="stat">
             <dt class="stat__label">TODAY</dt>
@@ -168,6 +217,11 @@
           <div class="chart__body" id="log-chart"></div>
         </div>
 
+        <div class="chart" id="log-sessions-block">
+          <div class="chart__title">// ÚLTIMAS SESIONES</div>
+          <div class="chart__body chart__body--sessions" id="log-sessions"></div>
+        </div>
+
         <div class="chart" id="log-tasks-block">
           <div class="chart__title">// TOP TASKS</div>
           <div class="chart__body" id="log-tasks"></div>
@@ -193,21 +247,12 @@
           <div class="heatmap-total" id="heatmap-total">—</div>
         </div>
       </div>
-    </section>
+    </div>
 
     <footer class="app__footer">
       <button class="footer__button" id="clear-completed" type="button">
-        Limpiar completadas
+        Archivar completadas
       </button>
-      <div class="footer__group">
-        <button class="footer__button footer__button--alt" id="export-btn" type="button" title="Descargar una copia de tareas, sesiones y ajustes">
-          Exportar
-        </button>
-        <button class="footer__button footer__button--alt" id="import-btn" type="button" title="Restaurar desde una copia (sustituye los datos actuales)">
-          Importar
-        </button>
-        <input type="file" id="import-file" accept="application/json,.json" hidden />
-      </div>
     </footer>
 
     <p class="empty" id="empty">No hay tareas. ¡Añade una!</p>
@@ -258,7 +303,7 @@
   <div class="session-note" id="session-note" hidden>
     <div class="session-note__panel" role="dialog" aria-labelledby="session-note-title">
       <p class="session-note__title" id="session-note-title">[ sesión completa ]</p>
-      <label class="session-note__label" for="session-note-input">¿Qué hiciste en este pomodoro? <span class="session-note__hint">(opcional)</span></label>
+      <label class="session-note__label" for="session-note-input" id="session-note-label">¿Qué hiciste en este pomodoro? <span class="session-note__hint">(opcional)</span></label>
       <input type="text" id="session-note-input" class="session-note__input" maxlength="200" autocomplete="off" />
       <div class="session-note__actions">
         <button class="session-note__btn session-note__btn--primary" id="session-note-save" type="button">GUARDAR</button>

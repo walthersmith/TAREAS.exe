@@ -1,6 +1,6 @@
 // Service worker: cachea los estáticos para que la app funcione sin conexión.
 // Sólo se registra al servir por HTTP; abriendo por file:// no interviene.
-const CACHE = "tareas-v5";
+const CACHE = "tareas-v7";
 const ASSETS = [
   "./",
   "./index.html",
