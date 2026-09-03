@@ -199,7 +199,7 @@ Companion **a la izquierda** de `.app` (mismo patrón que RADIO.exe a la derecha
 
 | Slice | New field | Loader behavior |
 |---|---|---|
-| `todo-app:tasks` | `deadline?: number \| null`, `completedAt?: number \| null` | default `null` |
+| `todo-app:tasks` | `deadline?: number \| null`, `completedAt?: number \| null`, `createdAt?: number \| null` | default `null`; `createdAt` se setea en `addTask` |
 | `todo-app:archived` | array de tareas + `archivedAt` | defensive `loadArchived()` |
 | `todo-app:backlog` | mismas campos que tarea (done=false) | defensive `loadBacklog()` |
 | `todo-app:templates` | `{id, text, tags[]}` | defensive `loadTemplates()`; migra desde `todo-app:bank` |

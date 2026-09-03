@@ -287,6 +287,10 @@ const customRomHighlightInput = document.getElementById("custom-rom-highlight");
 const customRomPreview = document.getElementById("custom-rom-preview");
 
 // ===== PERSISTENCIA =====
+function normalizeCreatedAt(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function loadTasks() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -303,6 +307,7 @@ function loadTasks() {
         : [],
       deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
       completedAt: typeof t.completedAt === "number" && Number.isFinite(t.completedAt) ? t.completedAt : null,
+      createdAt: normalizeCreatedAt(t.createdAt),
     })) : [];
   } catch {
     return [];
@@ -329,6 +334,7 @@ function loadArchived() {
         : [],
       deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
       completedAt: typeof t.completedAt === "number" && Number.isFinite(t.completedAt) ? t.completedAt : null,
+      createdAt: normalizeCreatedAt(t.createdAt),
       archivedAt: typeof t.archivedAt === "number" && Number.isFinite(t.archivedAt) ? t.archivedAt : Date.now(),
     })) : [];
   } catch {
@@ -356,6 +362,7 @@ function loadBacklog() {
         : [],
       deadline: typeof t.deadline === "number" && Number.isFinite(t.deadline) ? t.deadline : null,
       completedAt: null,
+      createdAt: normalizeCreatedAt(t.createdAt),
     })).filter((t) => t && typeof t.id === "string" && typeof t.text === "string") : [];
   } catch {
     return [];
@@ -945,6 +952,28 @@ function formatDeadlineShort(ts) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Fecha/hora de registro: hoy → "hoy HH:MM"; este año → "DD/MM HH:MM"; si no → "DD/MM/YY HH:MM". */
+function formatCreatedAt(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (dayKey(d) === dayKey(now)) return `hoy ${time}`;
+  const date = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+  if (d.getFullYear() === now.getFullYear()) return `${date} ${time}`;
+  return `${date}/${String(d.getFullYear()).slice(-2)} ${time}`;
+}
+
+function formatCreatedAtTitle(ts) {
+  return new Date(ts).toLocaleString("es", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function toDatetimeLocalValue(ts) {
   const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, "0");
@@ -955,33 +984,64 @@ function buildDeadlineControl(task) {
   const wrap = document.createElement("span");
   wrap.className = "item__deadline-wrap";
 
-  const hidden = document.createElement("input");
-  hidden.type = "datetime-local";
-  hidden.className = "item__deadline-input";
-  hidden.setAttribute("aria-hidden", "true");
-  if (task.deadline) hidden.value = toDatetimeLocalValue(task.deadline);
-
-  const btn = document.createElement("button");
-  btn.type = "button";
+  // Visual badge only — the real control is the overlay input. On iPad/iOS,
+  // showPicker()/click() on a 0×0 hidden input never opens the wheels; the
+  // tap must land on the datetime-local itself.
+  const badge = document.createElement("span");
   const status = getDeadlineStatus(task.deadline);
-  btn.className = "item__deadline" + (status ? ` item__deadline--${status}` : "");
-  btn.textContent = task.deadline ? formatDeadlineShort(task.deadline) : "◷";
-  btn.title = task.deadline ? "Cambiar deadline · click derecho para quitar" : "Añadir deadline";
-  btn.setAttribute("aria-label", task.deadline ? `Deadline ${formatDeadlineShort(task.deadline)}` : "Añadir deadline");
-  if (!task.deadline) btn.classList.add("item__deadline--empty");
+  badge.className = "item__deadline" + (status ? ` item__deadline--${status}` : "");
+  badge.textContent = task.deadline ? formatDeadlineShort(task.deadline) : "◷";
+  badge.setAttribute("aria-hidden", "true");
+  if (!task.deadline) badge.classList.add("item__deadline--empty");
 
-  btn.addEventListener("click", () => {
-    hidden.showPicker ? hidden.showPicker() : hidden.click();
-  });
-  btn.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
+  const input = document.createElement("input");
+  input.type = "datetime-local";
+  input.className = "item__deadline-input";
+  input.title = task.deadline
+    ? "Cambiar deadline · mantén pulsado o click derecho para quitar"
+    : "Añadir deadline";
+  input.setAttribute(
+    "aria-label",
+    task.deadline ? `Deadline ${formatDeadlineShort(task.deadline)}` : "Añadir deadline"
+  );
+  if (task.deadline) input.value = toDatetimeLocalValue(task.deadline);
+
+  const clearDeadline = () => {
+    if (!task.deadline) return;
     task.deadline = null;
     saveTasks();
     renderTasks();
+  };
+
+  wrap.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    clearDeadline();
   });
-  hidden.addEventListener("change", () => {
-    if (hidden.value) {
-      task.deadline = new Date(hidden.value).getTime();
+
+  // Long-press clear for touch (iPad has no reliable right-click).
+  let pressTimer = null;
+  const cancelPress = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+  wrap.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!task.deadline) return;
+    cancelPress();
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      clearDeadline();
+    }, 550);
+  });
+  wrap.addEventListener("pointerup", cancelPress);
+  wrap.addEventListener("pointerleave", cancelPress);
+  wrap.addEventListener("pointercancel", cancelPress);
+
+  input.addEventListener("change", () => {
+    if (input.value) {
+      task.deadline = new Date(input.value).getTime();
     } else {
       task.deadline = null;
     }
@@ -990,7 +1050,7 @@ function buildDeadlineControl(task) {
     checkDeadlines();
   });
 
-  wrap.append(hidden, btn);
+  wrap.append(badge, input);
   return wrap;
 }
 
@@ -1024,6 +1084,14 @@ function buildTaskItem(task, container) {
     body.addEventListener("dblclick", () => startEditing(task.id));
   }
   main.appendChild(body);
+
+  if (task.createdAt) {
+    const created = document.createElement("span");
+    created.className = "item__created";
+    created.textContent = formatCreatedAt(task.createdAt);
+    created.title = `Registrada ${formatCreatedAtTitle(task.createdAt)}`;
+    main.appendChild(created);
+  }
 
   if (task.tags && task.tags.length > 0) {
     main.appendChild(buildTagsRow(task.tags));
@@ -1272,6 +1340,7 @@ function addTask(text, opts = {}) {
     tags: parsed.tags,
     deadline: opts.deadline || null,
     completedAt: null,
+    createdAt: Date.now(),
   };
   const pending = tasks.filter((t) => !t.done);
   const done = tasks.filter((t) => t.done);
@@ -1385,10 +1454,12 @@ function renderArchive() {
     meta.className = "archive-item__meta";
     const parts = [`${task.pomodoros || 0}▮`];
     if (task.tags && task.tags.length) parts.push(task.tags.map((t) => `#${t}`).join(" "));
+    if (task.createdAt) parts.push(`+ ${formatCreatedAt(task.createdAt)}`);
     if (task.deadline && task.completedAt) {
       parts.push(task.completedAt <= task.deadline ? "a tiempo" : "tarde");
     }
     meta.textContent = parts.join(" · ");
+    if (task.createdAt) meta.title = `Registrada ${formatCreatedAtTitle(task.createdAt)}`;
 
     const actions = document.createElement("span");
     actions.className = "archive-item__actions";
@@ -1436,6 +1507,7 @@ function sendToBacklog(id) {
     tags: [...(task.tags || [])],
     deadline: task.deadline || null,
     completedAt: null,
+    createdAt: task.createdAt || null,
   });
   saveTasks();
   saveBacklog();
@@ -1482,6 +1554,13 @@ function renderBacklog() {
     const tagStr = (task.tags || []).map((t) => `#${t}`).join(" ");
     text.textContent = tagStr ? `${task.text} ${tagStr}` : task.text;
 
+    const meta = document.createElement("span");
+    meta.className = "backlog-item__meta";
+    if (task.createdAt) {
+      meta.textContent = formatCreatedAt(task.createdAt);
+      meta.title = `Registrada ${formatCreatedAtTitle(task.createdAt)}`;
+    }
+
     const actions = document.createElement("span");
     actions.className = "backlog-item__actions";
 
@@ -1500,7 +1579,8 @@ function renderBacklog() {
     del.addEventListener("click", () => deleteFromBacklog(task.id));
 
     actions.append(pull, del);
-    li.append(text, actions);
+    if (task.createdAt) li.append(text, meta, actions);
+    else li.append(text, actions);
     backlogList.appendChild(li);
   }
 }
@@ -2381,7 +2461,7 @@ const HELP_CONTENT = [
       ["Botón ◎", "Marcar como tarea activa"],
       ["Botón ⊞", "Archivar tarea hecha"],
       ["Botón →", "Enviar pendiente al backlog"],
-      ["◷ en tarea", "Añadir deadline · click derecho quita"],
+      ["◷ en tarea", "Añadir deadline · mantén pulsado / click derecho quita"],
     ],
   },
   {
